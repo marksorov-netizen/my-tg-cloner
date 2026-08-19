@@ -65,7 +65,7 @@ logging.basicConfig(
 logger = logging.getLogger("server")
 
 # ---------- Конфигурация CORS ----------
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 logger.info(f"CORS allowed origins: {ALLOWED_ORIGINS}")
 
@@ -118,9 +118,10 @@ app = FastAPI(title="MyBotAi11 API", version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r".*",
     allow_credentials=True,                                         # обязательно для cookies
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["*"],
 )
 
 
@@ -2514,4 +2515,6 @@ async def _restart_listeners():
 # ============================================================
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run(app, host=host, port=port, reload=False)
