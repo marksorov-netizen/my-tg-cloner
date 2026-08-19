@@ -1,0 +1,43 @@
+# ==============================================
+# MyBotAi11 — Python зависимости
+# Установка: pip install -r requirements.txt
+# ==============================================
+
+# Web framework
+fastapi
+uvicorn[standard]
+
+# Telegram User API
+telethon
+
+# Telegram Bot API (for order_bot_handler.py)
+pyTelegramBotAPI
+httpx
+
+# AI — Gemini (серверная сторона)
+google-generativeai
+
+# Database
+sqlalchemy[asyncio]
+aiosqlite            # SQLite async driver (dev/default)
+asyncpg              # PostgreSQL async driver (prod, сервер)
+psycopg2-binary      # PostgreSQL sync driver (order_bot_handler.py)
+
+# Utilities
+python-multipart
+python-dotenv
+requests
+Pillow
+tenacity
+
+# Security
+cryptography              # Fernet шифрование tg_api_hash, session strings
+python-jose[cryptography] # JWT токены для httpOnly cookie сессий
+
+# Deduplication
+simhash
+ImageHash
+
+# Optional (для prod с PostgreSQL + векторным поиском):
+# pgvector
+# redis

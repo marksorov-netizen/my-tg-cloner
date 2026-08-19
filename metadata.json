@@ -1,0 +1,5 @@
+{
+  "name": "AutoPost AI Manager",
+  "description": "Автоматизированная система репостинга с AI-рерайтом и пересчетом цен (Опт/Дроп/Розница).",
+  "requestFramePermissions": []
+}

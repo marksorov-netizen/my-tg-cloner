@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GhostPost — AI-автопилот для Telegram каналов</title>
+  <meta name="description" content="Автоматически копируй, переписывай и публикуй контент из Telegram каналов с помощью AI. Набирай аудиторию без усилий." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --red:    #e63946;
+      --red-glow: rgba(230,57,70,0.35);
+      --gold:   #f4a623;
+      --gold-dim: rgba(244,166,35,0.12);
+      --bg:     #090909;
+      --bg2:    #0f0f0f;
+      --surface: rgba(255,255,255,0.04);
+      --border:  rgba(255,255,255,0.07);
+      --border-r: rgba(230,57,70,0.3);
+      --text:   #f5f5f5;
+      --muted:  rgba(255,255,255,0.45);
+      --font-head: 'Space Grotesk', sans-serif;
+      --font:      'Inter', sans-serif;
+    }
+    html { scroll-behavior: smooth; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font); line-height: 1.6; overflow-x: hidden; }
+    a { text-decoration: none; color: inherit; }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg2); }
+    ::-webkit-scrollbar-thumb { background: var(--red); border-radius: 3px; }
+    .container { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+    .gradient-text {
+      background: linear-gradient(135deg, #ffffff 0%, var(--gold) 50%, var(--red) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: linear-gradient(135deg, var(--red) 0%, #c0392b 100%);
+      color: #fff; font-weight: 700; font-size: 15px;
+      padding: 14px 32px; border-radius: 12px; border: none; cursor: pointer;
+      box-shadow: 0 0 30px var(--red-glow), 0 4px 20px rgba(0,0,0,0.4);
+      transition: all 0.3s ease; position: relative; overflow: hidden;
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 50px var(--red-glow), 0 8px 30px rgba(0,0,0,0.5); }
+    .btn-outline {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: transparent; color: var(--text); font-weight: 600; font-size: 15px;
+      padding: 13px 28px; border-radius: 12px; border: 1px solid var(--border); cursor: pointer; transition: all 0.3s ease;
+    }
+    .btn-outline:hover { border-color: var(--red); color: var(--red); box-shadow: 0 0 20px var(--red-glow); }
+    .tag {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--gold-dim); border: 1px solid rgba(244,166,35,0.25);
+      color: var(--gold); font-size: 12px; font-weight: 700;
+      padding: 5px 14px; border-radius: 100px; text-transform: uppercase; letter-spacing: 1.2px;
+    }
+
+    /* BG */
+    .bg-orbs { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+    .orb { position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.12; }
+    .orb-1 { width: 700px; height: 700px; background: var(--red); top: -200px; left: -200px; animation: orb-float 12s ease-in-out infinite; }
+    .orb-2 { width: 500px; height: 500px; background: var(--gold); bottom: -100px; right: -100px; animation: orb-float 15s ease-in-out infinite reverse; }
+    .orb-3 { width: 400px; height: 400px; background: #7c3aed; top: 50%; left: 50%; margin-top:-200px; margin-left:-200px; animation: orb-float 10s ease-in-out infinite 3s; }
+    @keyframes orb-float { 0%,100% { transform: translate(0,0) scale(1); } 33% { transform: translate(30px,-20px) scale(1.05); } 66% { transform: translate(-20px,30px) scale(0.97); } }
+    .grid-bg { position: fixed; inset: 0; pointer-events: none; z-index: 0; background-image: linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px); background-size: 50px 50px; }
+
+    /* NAV */
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; padding: 16px 0; background: rgba(9,9,9,0.8); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; }
+    .logo { display: flex; align-items: center; gap: 10px; font-family: var(--font-head); font-size: 22px; font-weight: 800; }
+    .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, var(--red), #c0392b); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; box-shadow: 0 0 20px var(--red-glow); }
+    .logo span { color: var(--red); }
+    .nav-links { display: flex; align-items: center; gap: 32px; list-style: none; }
+    .nav-links a { color: var(--muted); font-size: 14px; font-weight: 500; transition: color 0.2s; }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta { display: flex; gap: 12px; align-items: center; }
+
+    /* HERO */
+    .hero { min-height: 100vh; display: flex; align-items: center; padding: 120px 0 80px; position: relative; z-index: 1; }
+    .hero-content { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
+    .hero-badge { margin-bottom: 24px; }
+    .hero h1 { font-family: var(--font-head); font-size: clamp(44px, 6vw, 76px); font-weight: 800; line-height: 1.05; margin-bottom: 24px; letter-spacing: -2px; }
+    .hero p { font-size: 18px; color: var(--muted); line-height: 1.7; margin-bottom: 40px; max-width: 480px; }
+    .hero-cta { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 60px; }
+    .hero-stats { display: flex; gap: 40px; padding-top: 32px; border-top: 1px solid var(--border); }
+    .stat-val { font-family: var(--font-head); font-size: 30px; font-weight: 800; background: linear-gradient(135deg, var(--text), var(--gold)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .stat-label { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+    /* HERO VISUAL */
+    .hero-visual { position: relative; }
+    .phone-mockup { position: relative; z-index: 2; background: linear-gradient(145deg, #1a1a1a, #111); border: 1px solid var(--border); border-radius: 24px; padding: 24px; box-shadow: 0 40px 80px rgba(0,0,0,0.6), 0 0 60px rgba(230,57,70,0.1); }
+    .mockup-header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    .mockup-avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, var(--red), #7c3aed); display: flex; align-items: center; justify-content: center; font-size: 16px; }
+    .mockup-channel { font-size: 13px; font-weight: 600; }
+    .mockup-sub { font-size: 11px; color: var(--muted); }
+    .post-original { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+    .post-rewritten { background: rgba(230,57,70,0.06); border: 1px solid rgba(230,57,70,0.2); border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+    .post-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .post-label.orig { color: var(--muted); }
+    .post-label.rewr { color: var(--red); }
+    .post-text { font-size: 13px; line-height: 1.6; color: rgba(255,255,255,0.75); }
+    .ai-arrow { display: flex; align-items: center; justify-content: center; margin: 8px 0; gap: 8px; font-size: 11px; color: var(--gold); font-weight: 700; }
+    .ai-arrow-line { flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--gold), transparent); }
+    .floating-badge { position: absolute; background: linear-gradient(135deg, var(--gold), #e67e22); color: #000; font-size: 11px; font-weight: 800; padding: 6px 12px; border-radius: 100px; box-shadow: 0 0 30px rgba(244,166,35,0.4); }
+    .fb-1 { top: -16px; right: -20px; animation: fb-float 3s ease-in-out infinite; }
+    .fb-2 { bottom: 20px; left: -24px; animation: fb-float 3s ease-in-out infinite 1.5s; }
+    @keyframes fb-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+    .glow-ring { position: absolute; inset: -20px; border-radius: 40px; border: 1px solid rgba(230,57,70,0.15); animation: ring-pulse 3s ease-in-out infinite; }
+    @keyframes ring-pulse { 0%,100% { opacity: 0.5; transform: scale(1); } 50% { opacity: 1; transform: scale(1.01); } }
+
+    /* SECTION */
+    section { position: relative; z-index: 1; }
+    .section-label { text-align: center; margin-bottom: 16px; }
+    .section-title { font-family: var(--font-head); font-size: clamp(32px, 4vw, 52px); font-weight: 800; text-align: center; letter-spacing: -1.5px; margin-bottom: 16px; }
+    .section-sub { font-size: 17px; color: var(--muted); text-align: center; max-width: 560px; margin: 0 auto 60px; }
+
+    /* TICKER */
+    .ticker-wrapper { overflow: hidden; padding: 20px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 0 0 120px; }
+    .ticker { display: flex; white-space: nowrap; animation: ticker-scroll 30s linear infinite; }
+    .ticker-item { display: inline-flex; align-items: center; gap: 12px; padding: 0 40px; color: var(--muted); font-size: 14px; font-weight: 500; }
+    .ticker-item .dot { color: var(--red); font-size: 20px; }
+    @keyframes ticker-scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+
+    /* HOW */
+    .how-section { padding: 120px 0; }
+    .steps-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; position: relative; }
+    .steps-grid::before { content: ''; position: absolute; top: 36px; left: 12%; right: 12%; height: 1px; background: linear-gradient(90deg, transparent, var(--red), var(--gold), var(--red), transparent); z-index: 0; }
+    .step-card { position: relative; z-index: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 28px 24px; transition: all 0.3s ease; }
+    .step-card:hover { border-color: var(--border-r); box-shadow: 0 0 40px rgba(230,57,70,0.08); transform: translateY(-4px); }
+    .step-num { width: 48px; height: 48px; border-radius: 14px; margin-bottom: 20px; display: flex; align-items: center; justify-content: center; font-family: var(--font-head); font-size: 20px; font-weight: 800; background: linear-gradient(135deg, var(--red), #c0392b); box-shadow: 0 0 24px var(--red-glow); }
+    .step-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
+    .step-card p { font-size: 14px; color: var(--muted); line-height: 1.6; }
+
+    /* FEATURES */
+    .features-section { padding: 80px 0 120px; }
+    .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 32px 28px; transition: all 0.3s ease; position: relative; overflow: hidden; }
+    .feature-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--red), transparent); opacity: 0; transition: opacity 0.3s; }
+    .feature-card:hover::before { opacity: 1; }
+    .feature-card:hover { border-color: var(--border-r); transform: translateY(-4px); box-shadow: 0 20px 60px rgba(0,0,0,0.4), 0 0 40px rgba(230,57,70,0.06); }
+    .feature-icon { width: 52px; height: 52px; border-radius: 14px; margin-bottom: 20px; display: flex; align-items: center; justify-content: center; font-size: 24px; background: rgba(230,57,70,0.1); border: 1px solid rgba(230,57,70,0.2); }
+    .feature-card h3 { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+    .feature-card p { font-size: 14px; color: var(--muted); line-height: 1.7; }
+    .feature-card.large { grid-column: span 2; }
+
+    /* MODULES */
+    .modules-section { padding: 80px 0 120px; }
+    .modules-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .module-card { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 32px 28px; transition: all 0.35s ease; cursor: pointer; }
+    .module-card:hover { border-color: var(--border-r); box-shadow: 0 0 60px rgba(230,57,70,0.1); transform: translateY(-6px); }
+    .module-num { font-family: var(--font-head); font-size: 11px; font-weight: 800; color: var(--red); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 14px; }
+    .module-card h3 { font-size: 20px; font-weight: 800; margin-bottom: 12px; }
+    .module-card p { font-size: 14px; color: var(--muted); line-height: 1.7; margin-bottom: 20px; }
+    .module-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+    .module-tag { background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 500; padding: 4px 12px; border-radius: 100px; }
+
+    /* PRICING */
+    .pricing-section { padding: 80px 0 120px; }
+    .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .price-card { background: var(--surface); border: 1px solid var(--border); border-radius: 24px; padding: 36px 32px; position: relative; transition: all 0.3s ease; }
+    .price-card:hover { transform: translateY(-4px); }
+    .price-card.featured { border-color: var(--red); box-shadow: 0 0 60px rgba(230,57,70,0.15); }
+    .featured-badge { position: absolute; top: -14px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg, var(--red), #c0392b); color: #fff; font-size: 12px; font-weight: 700; padding: 4px 16px; border-radius: 100px; white-space: nowrap; }
+    .plan-name { font-size: 14px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }
+    .plan-price { font-family: var(--font-head); font-size: 48px; font-weight: 800; margin-bottom: 8px; line-height: 1; }
+    .plan-price span { font-size: 20px; color: var(--muted); font-weight: 400; }
+    .plan-desc { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
+    .plan-features { list-style: none; margin-bottom: 32px; }
+    .plan-features li { font-size: 14px; padding: 8px 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+    .plan-features li::before { content: '✓'; color: var(--red); font-weight: 700; flex-shrink: 0; }
+    .plan-btn { width: 100%; padding: 14px; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.3s ease; border: none; }
+    .plan-btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .plan-btn-outline:hover { border-color: var(--red); color: var(--red); }
+    .plan-btn-primary { background: linear-gradient(135deg, var(--red), #c0392b); color: #fff; box-shadow: 0 0 30px var(--red-glow); }
+    .plan-btn-primary:hover { box-shadow: 0 0 50px var(--red-glow); transform: translateY(-2px); }
+
+    /* FAQ */
+    .faq-section { padding: 80px 0 120px; }
+    .faq-list { max-width: 720px; margin: 0 auto; }
+    .faq-item { border: 1px solid var(--border); border-radius: 16px; margin-bottom: 12px; overflow: hidden; transition: border-color 0.3s; }
+    .faq-item:hover { border-color: var(--border-r); }
+    .faq-q { padding: 20px 24px; font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+    .faq-icon { color: var(--red); font-size: 20px; transition: transform 0.3s; flex-shrink: 0; }
+    .faq-a { max-height: 0; overflow: hidden; transition: max-height 0.4s ease; padding: 0 24px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .faq-item.open .faq-a { max-height: 300px; padding: 0 24px 20px; }
+    .faq-item.open .faq-icon { transform: rotate(45deg); }
+
+    /* CTA */
+    .cta-section { padding: 80px 0 120px; }
+    .cta-box { background: linear-gradient(135deg, rgba(230,57,70,0.12), rgba(124,58,237,0.08)); border: 1px solid rgba(230,57,70,0.25); border-radius: 32px; padding: 80px 60px; text-align: center; position: relative; overflow: hidden; }
+    .cta-box::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 60%; height: 1px; background: linear-gradient(90deg, transparent, var(--red), var(--gold), var(--red), transparent); }
+    .cta-box h2 { font-family: var(--font-head); font-size: clamp(32px, 4vw, 52px); font-weight: 800; margin-bottom: 20px; letter-spacing: -1.5px; }
+    .cta-box p { font-size: 18px; color: var(--muted); margin-bottom: 40px; }
+    .cta-btns { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+
+    /* FOOTER */
+    footer { border-top: 1px solid var(--border); padding: 48px 0; color: var(--muted); font-size: 14px; }
+    .footer-inner { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; }
+    .footer-links { display: flex; gap: 24px; }
+    .footer-links a { color: var(--muted); transition: color 0.2s; }
+    .footer-links a:hover { color: var(--red); }
+
+    /* FLOATING SOCIAL ICONS & DYNAMIC MOBILE HERO */
+    .float-icon {
+      position: absolute;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 700;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      pointer-events: none;
+    }
+    .float-icon-1 {
+      top: -15px; left: 10px;
+      background: rgba(230,57,70,0.18);
+      border: 1px solid rgba(230,57,70,0.4);
+      color: #e63946;
+      animation: float1 3.5s ease-in-out infinite;
+    }
+    .float-icon-2 {
+      top: 15px; right: 10px;
+      background: rgba(244,166,35,0.18);
+      border: 1px solid rgba(244,166,35,0.4);
+      color: #f4a623;
+      animation: float2 4.5s ease-in-out infinite 0.8s;
+    }
+    .float-icon-3 {
+      bottom: 20px; left: 5px;
+      background: rgba(16,185,129,0.18);
+      border: 1px solid rgba(16,185,129,0.4);
+      color: #10b981;
+      animation: float1 4s ease-in-out infinite 1.2s;
+    }
+    .float-icon-4 {
+      bottom: 40px; right: 5px;
+      background: rgba(124,58,237,0.18);
+      border: 1px solid rgba(124,58,237,0.4);
+      color: #a78bfa;
+      animation: float2 5s ease-in-out infinite 1.8s;
+    }
+
+    @keyframes float1 {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-10px) rotate(5deg); }
+    }
+    @keyframes float2 {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(10px) rotate(-5deg); }
+    }
+
+    @media (max-width: 900px) {
+      .hero-content { grid-template-columns: 1fr !important; gap: 24px !important; text-align: center !important; position: relative !important; }
+      .hero-badge { display: flex !important; justify-content: center !important; }
+      .hero h1 { font-size: 34px !important; line-height: 1.15 !important; letter-spacing: -1px !important; margin-bottom: 16px !important; }
+      .hero p { font-size: 15px !important; margin-bottom: 24px !important; margin-left: auto !important; margin-right: auto !important; }
+      .hero-cta { flex-direction: column !important; gap: 12px !important; width: 100% !important; }
+      .hero-cta .btn-primary, .hero-cta .btn-outline { width: 100% !important; justify-content: center !important; padding: 14px !important; }
+      .hero-visual { display: block !important; margin-top: 24px; width: 100% !important; }
+      .features-grid, .modules-grid, .pricing-grid, .steps-grid { grid-template-columns: 1fr !important; gap: 16px !important; }
+      .steps-grid::before { display: none; }
+      .feature-card.large { grid-column: span 1 !important; }
+      .nav-links { display: none !important; }
+      .nav-cta { gap: 8px !important; }
+      .nav-cta .btn-outline { display: none !important; }
+      .hero { padding: 75px 0 35px !important; }
+      .features-section, .modules-section, .pricing-section, .faq-section, .cta-section { padding: 40px 0 !important; }
+      .cta-box { padding: 36px 20px !important; border-radius: 20px !important; }
+      .cta-box h2 { font-size: 26px !important; }
+      .hero-stats { grid-template-columns: 1fr 1fr 1fr !important; gap: 8px !important; text-align: center !important; background: rgba(255,255,255,0.03) !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 16px !important; padding: 14px 10px !important; margin-top: 24px !important; }
+      .stat-val { font-size: 18px !important; }
+      .stat-label { font-size: 10px !important; }
+      .floating-badge { font-size: 10px !important; padding: 4px 8px !important; }
+      .fb-1 { top: -10px !important; right: -6px !important; }
+      .fb-2 { bottom: 10px !important; left: -6px !important; }
+    }
+  </style>
+</head>
+<body>
+<div class="bg-orbs">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+</div>
+<div class="grid-bg"></div>
+
+<!-- NAV -->
+<nav id="main-nav">
+  <div class="container nav-inner">
+    <div class="logo"><div class="logo-icon">&#x1F47B;</div>Ghost<span>Post</span></div>
+    <ul class="nav-links">
+      <li><a href="#how">Как работает</a></li>
+      <li><a href="#modules">Модули</a></li>
+      <li><a href="#pricing">Тарифы</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+    <div class="nav-cta">
+      <a href="#" class="btn-outline" style="padding:10px 20px;font-size:14px;">Войти</a>
+      <a href="#" class="btn-primary" style="padding:10px 22px;font-size:14px;">Начать бесплатно</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-content">
+      <div style="position: relative;">
+        <!-- Dynamic Floating Social Badges for Mobile & Desktop -->
+        <div class="float-icon float-icon-1">✈️ Telegram 24/7</div>
+        <div class="float-icon float-icon-2">🤖 AI Rewriter</div>
+        
+        <div class="hero-badge"><span class="tag">&#x26A1; AI-автопилот для Telegram</span></div>
+        <h1>Контент<br>на <span class="gradient-text">автопилоте</span></h1>
+        <p>Подключи каналы-доноры, задай стиль — GhostPost сам читает, переписывает и публикует контент. Твой канал растёт, пока ты занимаешься другим.</p>
+        <div class="hero-cta">
+          <a href="#" class="btn-primary">&#x1F680; Начать бесплатно 7 дней</a>
+          <a href="#how" class="btn-outline">Как это работает &rarr;</a>
+        </div>
+
+        <div class="hero-stats">
+          <div><div class="stat-val">2 400+</div><div class="stat-label">Активных каналов</div></div>
+          <div><div class="stat-val">1.8M</div><div class="stat-label">Постов опубликовано</div></div>
+          <div><div class="stat-val">99.7%</div><div class="stat-label">Аптайм сервиса</div></div>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <!-- Floating Badges on Video -->
+        <div class="float-icon float-icon-3">💰 Наценка %</div>
+        <div class="float-icon float-icon-4">⚡ 60fps Перенос</div>
+
+        <div class="glow-ring"></div>
+        <div style="position: relative; width: 100%; border-radius: 24px; padding: 3px; background: linear-gradient(135deg, #e63946, #f4a623, #7c3aed); box-shadow: 0 0 50px rgba(230, 57, 70, 0.4), 0 20px 40px rgba(0,0,0,0.8);">
+          <div style="position: relative; width: 100%; border-radius: 22px; overflow: hidden; background: #090909;">
+            <video 
+              autoplay 
+              loop 
+              muted 
+              playsinline 
+              style="width: 100%; height: auto; display: block; border-radius: 22px; aspect-ratio: 16/9; object-fit: cover;"
+            >
+              <source src="hero_video.mp4" type="video/mp4">
+              <source src="components/Telegram_posts_flowing_through_i…_202608092106.mp4" type="video/mp4">
+            </video>
+            <div style="position: absolute; inset: 0; background: linear-gradient(to top, rgba(9,9,9,0.7) 0%, transparent 40%); pointer-events: none;"></div>
+          </div>
+        </div>
+        <div class="floating-badge fb-1">&#x26A1; AI авто-перенос</div>
+        <div class="floating-badge fb-2">&#x1F4F8; Авто-скачивание медиа</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TICKER -->
+<div class="container">
+  <div class="ticker-wrapper">
+    <div class="ticker">
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Парсинг TG каналов</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> AI рерайт текстов</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Скачивание медиа</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Автопубликация</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Интернет магазины</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Наценки на товары</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Несколько доноров</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Фильтрация рекламы</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Гибкие промты</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Интервал постинга</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Парсинг TG каналов</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> AI рерайт текстов</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Скачивание медиа</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Автопубликация</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Интернет магазины</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Наценки на товары</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Несколько доноров</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Фильтрация рекламы</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Гибкие промты</span>
+      <span class="ticker-item"><span class="dot">&#x25CF;</span> Интервал постинга</span>
+    </div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section class="how-section" id="how">
+  <div class="container">
+    <div class="section-label"><span class="tag">&#x1F4CB; Процесс</span></div>
+    <h2 class="section-title">Запустить за <span class="gradient-text">4 шага</span></h2>
+    <p class="section-sub">Никаких сложных настроек. Зарегистрируйся, подключи аккаунт и запусти автопилот.</p>
+    <div class="steps-grid">
+      <div class="step-card">
+        <div class="step-num">1</div>
+        <h3>Регистрация</h3>
+        <p>Заходишь на сайт, регистрируешься через Telegram. Подтверждаешь код от нашего бота — и ты внутри.</p>
+      </div>
+      <div class="step-card">
+        <div class="step-num">2</div>
+        <h3>Подключи Telegram</h3>
+        <p>Вводишь свой API ID и API Hash (инструкция внутри). Авторизуешься через код — система работает от твоего аккаунта.</p>
+      </div>
+      <div class="step-card">
+        <div class="step-num">3</div>
+        <h3>Настрой проект</h3>
+        <p>Выбираешь каналы-доноры, свой канал куда постить, пишешь промт как должен выглядеть контент.</p>
+      </div>
+      <div class="step-card">
+        <div class="step-num">4</div>
+        <h3>Запусти и забудь</h3>
+        <p>Нажимаешь «Старт» — GhostPost работает 24/7 сам. Ты занимаешься своими делами, канал растёт.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="features-section">
+  <div class="container">
+    <div class="section-label"><span class="tag">&#x2699;&#xFE0F; Возможности</span></div>
+    <h2 class="section-title">Всё что нужно для <span class="gradient-text">роста канала</span></h2>
+    <p class="section-sub">Полный набор инструментов — от парсинга до публикации.</p>
+    <div class="features-grid">
+      <div class="feature-card large">
+        <div class="feature-icon">&#x1F916;</div>
+        <h3>AI рерайт любого стиля</h3>
+        <p>Система читает пост из донора и переписывает его в любом стиле который ты задашь: официальный, дружеский, нефорский, продающий — как угодно. Каждый раз уникальный текст, не копипаст.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x1F4F8;</div>
+        <h3>Медиа автоматически</h3>
+        <p>Скачивает фото и видео из постов донора и публикует вместе с текстом. Ничего не теряется.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x23F1;&#xFE0F;</div>
+        <h3>Гибкий интервал</h3>
+        <p>Настрой постинг каждые 2 часа, раз в день или по расписанию. Канал выглядит живым.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x1F3AF;</div>
+        <h3>Несколько доноров</h3>
+        <p>Добавь 5-10 каналов-доноров и система берёт лучший свежий контент из всех сразу.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x1F6AB;</div>
+        <h3>Фильтр рекламы</h3>
+        <p>AI определяет рекламные посты и пропускает их — в твой канал идёт только полезный контент.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x1F4B0;</div>
+        <h3>Автонаценки</h3>
+        <p>Для магазинов: система находит цену товара в посте и добавляет нужный процент автоматически.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MODULES -->
+<section class="modules-section" id="modules">
+  <div class="container">
+    <div class="section-label"><span class="tag">&#x1F4E6; Модули</span></div>
+    <h2 class="section-title">Три модуля — <span class="gradient-text">любая задача</span></h2>
+    <p class="section-sub">Каждый раздел платформы заточен под конкретную задачу.</p>
+    <div class="modules-grid">
+      <div class="module-card">
+        <div class="module-num">Модуль 01</div>
+        <h3>&#x1F4F0; Парсер каналов</h3>
+        <p>Для новостных, развлекательных, тематических каналов. Копируй контент конкурентов и переделывай в своём уникальном стиле автоматически.</p>
+        <div class="module-tags">
+          <span class="module-tag">Живой мониторинг</span>
+          <span class="module-tag">Пакетный импорт</span>
+          <span class="module-tag">Несколько доноров</span>
+        </div>
+      </div>
+      <div class="module-card">
+        <div class="module-num">Модуль 02</div>
+        <h3>&#x1F6D2; Интернет магазин</h3>
+        <p>Для владельцев магазинов в Telegram. Копируй товары конкурентов, меняй описание, добавляй наценку и публикуй у себя.</p>
+        <div class="module-tags">
+          <span class="module-tag">Автонаценка</span>
+          <span class="module-tag">Фильтр рекламы</span>
+          <span class="module-tag">Фото товаров</span>
+        </div>
+      </div>
+      <div class="module-card">
+        <div class="module-num">Модуль 03</div>
+        <h3>&#x270D;&#xFE0F; Промт-инжиниринг</h3>
+        <p>Помогает написать идеальный промт для AI. Чем точнее промт — тем лучше результат. Конструктор + готовые шаблоны.</p>
+        <div class="module-tags">
+          <span class="module-tag">Шаблоны промтов</span>
+          <span class="module-tag">AI-помощник</span>
+          <span class="module-tag">Тест промта</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="pricing-section" id="pricing">
+  <div class="container">
+    <div class="section-label"><span class="tag">&#x1F4B3; Тарифы</span></div>
+    <h2 class="section-title">Прозрачные <span class="gradient-text">цены</span></h2>
+    <p class="section-sub">Начни бесплатно. Переходи на платный когда вырастешь.</p>
+    <div class="pricing-grid">
+      <div class="price-card">
+        <div class="plan-name">Free</div>
+        <div class="plan-price">0 &#x20BD;<span>/мес</span></div>
+        <div class="plan-desc">Попробуй без риска</div>
+        <ul class="plan-features">
+          <li>1 проект</li>
+          <li>10 AI рерайтов в день</li>
+          <li>1 канал-донор</li>
+          <li>Базовые промты</li>
+          <li>Интервал от 6 часов</li>
+        </ul>
+        <button class="plan-btn plan-btn-outline">Начать бесплатно</button>
+      </div>
+      <div class="price-card featured">
+        <div class="featured-badge">&#x1F525; Популярный</div>
+        <div class="plan-name">Pro</div>
+        <div class="plan-price">990 &#x20BD;<span>/мес</span></div>
+        <div class="plan-desc">Для серьёзного роста</div>
+        <ul class="plan-features">
+          <li>5 проектов</li>
+          <li>500 AI рерайтов в день</li>
+          <li>До 10 доноров на проект</li>
+          <li>Все 3 модуля</li>
+          <li>Интервал от 30 минут</li>
+          <li>Приоритетная поддержка</li>
+          <li>Свой API ключ (безлимит)</li>
+        </ul>
+        <button class="plan-btn plan-btn-primary">Выбрать Pro</button>
+      </div>
+      <div class="price-card">
+        <div class="plan-name">Business</div>
+        <div class="plan-price">2 990 &#x20BD;<span>/мес</span></div>
+        <div class="plan-desc">Для команд и агентств</div>
+        <ul class="plan-features">
+          <li>Безлимит проектов</li>
+          <li>Безлимит рерайтов</li>
+          <li>Безлимит доноров</li>
+          <li>Интервал от 1 минуты</li>
+          <li>API доступ</li>
+          <li>Dedicated поддержка</li>
+          <li>White-label</li>
+        </ul>
+        <button class="plan-btn plan-btn-outline">Связаться</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq-section" id="faq">
+  <div class="container">
+    <div class="section-label"><span class="tag">&#x2753; Вопросы</span></div>
+    <h2 class="section-title">Частые <span class="gradient-text">вопросы</span></h2>
+    <div class="faq-list">
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q">Это легально? Не заблокируют ли мой аккаунт?<span class="faq-icon">+</span></div>
+        <div class="faq-a">Парсинг публичных каналов — обычное чтение информации. Мы используем официальное Telegram API и соблюдаем лимиты. При разумном интервале (от 1 часа) риск минимален.</div>
+      </div>
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q">Нужно ли оставлять компьютер включённым?<span class="faq-icon">+</span></div>
+        <div class="faq-a">Нет! GhostPost работает на наших серверах 24/7. После настройки тебе не нужно ничего держать включённым — система работает сама в облаке.</div>
+      </div>
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q">Что такое API ID и API Hash? Где взять?<span class="faq-icon">+</span></div>
+        <div class="faq-a">Ключи доступа к Telegram API — нужны чтобы система работала от имени твоего аккаунта. Получить бесплатно на my.telegram.org за 2 минуты. Внутри платформы есть пошаговая инструкция.</div>
+      </div>
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q">Мои данные в безопасности?<span class="faq-icon">+</span></div>
+        <div class="faq-a">API Hash хранится в зашифрованном виде. Мы не имеем доступа к вашим сообщениям и не передаём данные третьим лицам. Можно удалить аккаунт и все данные в любой момент.</div>
+      </div>
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q">Можно использовать для интернет-магазина?<span class="faq-icon">+</span></div>
+        <div class="faq-a">Да! Модуль «Интернет магазин» специально для этого. Система копирует товары, переписывает описание, добавляет наценку к цене и публикует с фотографиями.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="container">
+    <div class="cta-box">
+      <h2>Готов запустить <span class="gradient-text">канал на автопилоте?</span></h2>
+      <p>Зарегистрируйся за 2 минуты и получи 7 дней Pro бесплатно</p>
+      <div class="cta-btns">
+        <a href="#" class="btn-primary" style="font-size:16px;padding:16px 40px;">&#x1F680; Начать — 7 дней Pro бесплатно</a>
+        <a href="#how" class="btn-outline" style="font-size:16px;padding:16px 32px;">Смотреть демо &rarr;</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="container footer-inner">
+    <div class="logo" style="font-size:18px;">
+      <div class="logo-icon" style="width:30px;height:30px;font-size:14px;">&#x1F47B;</div>
+      Ghost<span>Post</span>
+    </div>
+    <div style="color:var(--muted);font-size:13px;">&#x00A9; 2025 GhostPost. Все права защищены.</div>
+    <div class="footer-links">
+      <a href="#">Конфиденциальность</a>
+      <a href="#">Условия</a>
+      <a href="#">Поддержка</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  function toggleFaq(el) {
+    const isOpen = el.classList.contains('open');
+    document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('open'));
+    if (!isOpen) el.classList.add('open');
+  }
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.style.opacity = '1';
+        e.target.style.transform = 'translateY(0)';
+      }
+    });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.step-card, .feature-card, .module-card, .price-card').forEach(el => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(30px)';
+    el.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+    observer.observe(el);
+  });
+  window.addEventListener('scroll', () => {
+    document.getElementById('main-nav').style.background =
+      window.scrollY > 50 ? 'rgba(9,9,9,0.97)' : 'rgba(9,9,9,0.8)';
+  });
+</script>
+</body>
+</html>
