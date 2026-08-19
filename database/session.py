@@ -71,16 +71,29 @@ async def init_db():
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        for alter_sql in [
-            "ALTER TABLE orders ADD COLUMN foot_size_cm TEXT;",
-            "ALTER TABLE orders ADD COLUMN height_weight TEXT;",
-            "ALTER TABLE orders ADD COLUMN supplier_message TEXT;",
-            "ALTER TABLE article_items ADD COLUMN product_type TEXT;",
-        ]:
-            try:
-                await conn.execute(text(alter_sql))
-            except Exception:
-                pass  # Колонка уже существует
+        is_pg = "postgres" in str(engine.url)
+        if is_pg:
+            for col, tbl in [
+                ("foot_size_cm", "orders"),
+                ("height_weight", "orders"),
+                ("supplier_message", "orders"),
+                ("product_type", "article_items"),
+            ]:
+                try:
+                    await conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} TEXT;"))
+                except Exception:
+                    pass
+        else:
+            for alter_sql in [
+                "ALTER TABLE orders ADD COLUMN foot_size_cm TEXT;",
+                "ALTER TABLE orders ADD COLUMN height_weight TEXT;",
+                "ALTER TABLE orders ADD COLUMN supplier_message TEXT;",
+                "ALTER TABLE article_items ADD COLUMN product_type TEXT;",
+            ]:
+                try:
+                    await conn.execute(text(alter_sql))
+                except Exception:
+                    pass
 
 
 async def _is_first_user(session: AsyncSession) -> bool:
