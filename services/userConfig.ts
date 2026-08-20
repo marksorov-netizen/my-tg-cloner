@@ -41,9 +41,11 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
         dropPct: parsed.dropPct !== undefined ? parsed.dropPct : 20,
         retailPct: parsed.retailPct !== undefined ? parsed.retailPct : 30,
 
-        parserDonors: parsed.parserDonors || ['@breakingnews_ru'],
+        parserDonors: (parsed.parserDonors && parsed.parserDonors.filter((d: string) => d !== '@breakingnews_ru').length > 0)
+          ? parsed.parserDonors.filter((d: string) => d !== '@breakingnews_ru')
+          : ['@durov'],
         parserTargets: parsed.parserTargets || ['@my_channel'],
-        parserPrompt: parsed.parserPrompt || 'Перепиши текст новости в стиле нефора: молодежный сленг, мемы, эмодзи, без официальщины.',
+        parserPrompt: parsed.parserPrompt || 'Перепиши текст новости: сделай его ярким, вовлекающим, добавь подходящие эмодзи и разбей на читаемые абзацы.',
         copyCount: parsed.copyCount || 100,
         intervalMinutes: parsed.intervalMinutes !== undefined ? parsed.intervalMinutes : 15,
       };
@@ -59,9 +61,9 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
     dropPct: 20,
     retailPct: 30,
 
-    parserDonors: ['@breakingnews_ru'],
+    parserDonors: ['@durov'],
     parserTargets: ['@my_channel'],
-    parserPrompt: 'Перепиши текст новости в стиле нефора: молодежный сленг, мемы, эмодзи, без официальщины.',
+    parserPrompt: 'Перепиши текст новости: сделай его ярким, вовлекающим, добавь подходящие эмодзи и разбей на читаемые абзацы.',
     copyCount: 100,
     intervalMinutes: 15,
   };

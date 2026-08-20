@@ -38,7 +38,7 @@ class TaskExecutionService {
     isProcessing: false,
     isLiveMonitoring: false,
     module: 'parser',
-    donors: ['@breakingnews_ru'],
+    donors: ['@durov'],
     targets: ['@my_channel'],
     current: 0,
     total: 0,

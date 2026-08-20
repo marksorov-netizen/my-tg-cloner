@@ -4,6 +4,7 @@ import { Plus, Trash2, Play, Square, Sparkles, Layers, Lock, Loader2, Radio, Clo
 import { useNavigate } from 'react-router-dom';
 import { apiService } from '../../services/apiService';
 import { processSinglePost } from '../../services/postProcessor';
+import { addActionLog } from '../../services/actionHistory';
 import { ActionHistoryPanel } from '../../components/ActionHistoryPanel';
 import { IntervalSelector } from '../../components/IntervalSelector';
 import { taskExecutionService, ActiveTaskState } from '../../services/taskExecutionService';
