@@ -194,20 +194,27 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
 
         if (cancelRef.current || taskExecutionService.isParserCancelled()) break;
 
-        // AI Rewrite
-        const result = await processSinglePost(msg.text, {
-          ...config,
-          useAI: true,
-          removeLinks: true,
-          sourceUrl: donorClean,
-          destinationChannel: targetCleanList[0]
-        }, false);
+        // AI Rewrite with custom user prompt
+        const result = await processSinglePost(
+          msg.text,
+          {
+            ...config,
+            useAI: true,
+            removeLinks: true,
+            sourceUrl: donorClean,
+            destinationChannel: targetCleanList[0]
+          },
+          false,
+          promptText,
+          false // isStoreMode = false
+        );
 
         if (cancelRef.current || taskExecutionService.isParserCancelled()) break;
 
         // REAL POSTING TO ALL TARGET CHANNELS SIMULTANEOUSLY
         let lastMediaCount = 0;
         let isSkipped = false;
+        let publishSuccess = false;
 
         for (const target of targetCleanList) {
           if (cancelRef.current || taskExecutionService.isParserCancelled()) break;
@@ -215,11 +222,17 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
             statusMessage: `Публикация поста ${i + 1} в канал ${target}...`
           });
 
-          const sendRes: any = await apiService.sendPost(target, result.processedContent, donorClean, msg.id, true);
-          if (sendRes && sendRes.status === 'skipped') {
-            isSkipped = true;
-          } else if (sendRes) {
-            lastMediaCount = sendRes.media_count || (sendRes.has_media ? 1 : 0);
+          try {
+            const sendRes: any = await apiService.sendPost(target, result.processedContent, donorClean, msg.id, true);
+            if (sendRes && sendRes.status === 'skipped') {
+              isSkipped = true;
+            } else if (sendRes) {
+              publishSuccess = true;
+              lastMediaCount = sendRes.media_count || (sendRes.has_media ? 1 : 0);
+            }
+          } catch (sendErr: any) {
+            console.warn(`Failed to send to target ${target}:`, sendErr);
+            addActionLog('⚠️ Ошибка канала', `Не удалось отправить в ${target}: ${sendErr.message}`, 'warning');
           }
         }
 
@@ -227,7 +240,7 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
 
         const currentLogs = taskExecutionService.getParserState().logs;
 
-        if (isSkipped) {
+        if (isSkipped && !publishSuccess) {
           taskExecutionService.updateParserState({
             logs: [
               {
@@ -277,8 +290,26 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
         if (cancelRef.current || taskExecutionService.isParserCancelled()) break;
       }
 
-      // 3. HYBRID TRANSITION TO LIVE MONITORING
+      // 3. HYBRID TRANSITION TO LIVE MONITORING (Real backend listener registration!)
       if (!cancelRef.current && !taskExecutionService.isParserCancelled() && enableLiveMonitoringAfterBatch) {
+        try {
+          // Register project in backend database so server listener actively tracks donor
+          const proj = await apiService.createProject({
+            name: `Парсер: ${donorClean} ➔ ${targetCleanList.join(', ')}`,
+            donor_channel_id: donorClean,
+            target_channel_id: targetCleanList.join(', '),
+            rewrite_enabled: true,
+            rewrite_prompt: promptText,
+            remove_links: true,
+            check_interval: intervalMinutes * 60,
+          });
+          if (proj && proj.id) {
+            await apiService.startProject(proj.id);
+          }
+        } catch (projErr) {
+          console.warn('Could not register backend monitoring project:', projErr);
+        }
+
         taskExecutionService.updateParserState({
           isLiveMonitoring: true,
           countdownSec: 0,

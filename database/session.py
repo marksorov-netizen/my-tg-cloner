@@ -39,11 +39,18 @@ def _try_decrypt(value: Optional[str]) -> Optional[str]:
 # SQLite по умолчанию (dev), PostgreSQL для prod
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./editorial.db")
 
-connect_args = {}
+engine_kwargs = {"echo": False}
 if DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    # PostgreSQL пул для высоких нагрузок (200+ одновременных пользователей)
+    engine_kwargs["pool_size"] = 30
+    engine_kwargs["max_overflow"] = 50
+    engine_kwargs["pool_timeout"] = 30
+    engine_kwargs["pool_recycle"] = 1800
+    engine_kwargs["pool_pre_ping"] = True
 
-engine = create_async_engine(DATABASE_URL, echo=False, connect_args=connect_args)
+engine = create_async_engine(DATABASE_URL, **engine_kwargs)
 
 # SQLite под конкурентной нагрузкой: WAL вместо journal + таймаут на блокировки.
 # Без этого одновременные записи дают "database is locked" и потери заказов.

@@ -10,6 +10,7 @@ telegram_service/listener.py
   - Добавлена защита от пустых сообщений и ошибок в handler
 """
 
+import asyncio
 import logging
 from telethon import events
 from telethon.tl.types import PeerChannel
@@ -40,6 +41,13 @@ def build_message(event) -> TelegramMessage:
     if isinstance(chat_id, PeerChannel):
         chat_id = chat_id.channel_id
 
+    chat_username = None
+    try:
+        if getattr(event, 'chat', None) and getattr(event.chat, 'username', None):
+            chat_username = event.chat.username
+    except Exception:
+        pass
+
     return TelegramMessage(
         message_id=msg.id,
         chat_id=chat_id,
@@ -49,12 +57,13 @@ def build_message(event) -> TelegramMessage:
         has_media=has_media,
         media_type=media_type,
         raw_event=event,
+        chat_username=chat_username,
     )
 
 
-def register_listeners(client, chat_ids=None):
+async def register_listeners(client, chat_ids=None):
     """
-    Регистрирует event handler для новых сообщений.
+    Регистрирует event handler для новых сообщений с предварительным резолвингом сущностей.
 
     Args:
         client: Telethon TelegramClient
@@ -66,7 +75,6 @@ def register_listeners(client, chat_ids=None):
     from core.brain import brain
 
     # Сброс всех предыдущих handlers чтобы не было дублей
-    # (Telethon не позволяет remove_event_handler(None), обходим через list)
     try:
         for handler, _ in list(client.list_event_handlers()):
             client.remove_event_handler(handler)
@@ -75,37 +83,49 @@ def register_listeners(client, chat_ids=None):
         logger.warning(f"Could not clear handlers: {e}")
 
     async def handler(event):
-        """Обработчик нового сообщения — передаёт в brain pipeline."""
+        """Неблокирующий обработчик нового сообщения — запускает brain в фоне."""
         try:
             # Игнорируем служебные/пустые сообщения
-            if not event.message or not event.message.text:
+            if not event.message:
                 return
 
             data = build_message(event)
             logger.info(
                 f"[Listener] New message: id={data.message_id} "
-                f"chat={data.chat_id} len={len(data.text)}"
+                f"chat={data.chat_id} (user=@{data.chat_username}) len={len(data.text or '')}"
             )
 
-            # Передаём в pipeline
-            await brain.process_new_entry(data)
+            # Передаём в pipeline в отдельном асинхронном таске, чтобы не блокировать event loop
+            asyncio.create_task(brain.process_new_entry(data))
 
         except Exception as e:
             logger.error(f"[Listener] Handler error: {e}", exc_info=True)
 
-    # Регистрируем handler
+    # Резолвинг и регистрация handler
     if chat_ids:
-        # Конвертируем @username в строки на случай если пришли числа
-        normalized = [str(ch) for ch in chat_ids]
+        resolved_chats = []
+        for ch in chat_ids:
+            clean_ch = str(ch).strip()
+            if not clean_ch:
+                continue
+            try:
+                # Резолвим entity в Telethon для надёжного матчинга обновлений
+                entity = await client.get_entity(clean_ch)
+                resolved_chats.append(entity)
+            except Exception as ent_err:
+                logger.warning(f"[Listener] Could not resolve entity '{clean_ch}': {ent_err}. Using string.")
+                resolved_chats.append(clean_ch)
+
         client.add_event_handler(
             handler,
-            events.NewMessage(chats=normalized, incoming=True)
+            events.NewMessage(chats=resolved_chats, incoming=True)
         )
         logger.info(
-            f"[Listener] Registered on {len(normalized)} channel(s): {normalized}"
+            f"[Listener] Registered on {len(resolved_chats)} channel(s): {chat_ids}"
         )
     else:
         client.add_event_handler(handler, events.NewMessage(incoming=True))
         logger.info("[Listener] Registered on ALL incoming messages")
 
-    return handler  # возвращаем ссылку на handler (для тестов)
+    return handler
+

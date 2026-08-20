@@ -273,7 +273,7 @@ class UserClientManager:
     пользователи делили один глобальный клиент и затирали сессии друг друга.
     """
 
-    def __init__(self, max_clients: int = 100):
+    def __init__(self, max_clients: int = 300):
         self._clients: Dict[str, TelegramClient] = {}
         self.max_clients = max_clients
 

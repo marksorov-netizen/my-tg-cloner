@@ -193,7 +193,9 @@ const publishToTelegram = async (text: string, config: AppConfig): Promise<void>
 export const processSinglePost = async (
   rawText: string,
   config: AppConfig,
-  isTestMode: boolean = false
+  isTestMode: boolean = false,
+  customPrompt?: string,
+  isStoreMode: boolean = false
 ): Promise<ProcessedPost & { calculatedPrice?: number; wholesalePrice?: number; dropPrice?: number }> => {
   const id = Math.random().toString(36).substr(2, 9);
   let processedText = rawText;
@@ -204,9 +206,9 @@ export const processSinglePost = async (
     processedText = processedText.replace(/https?:\/\/\S+/g, '');
   }
 
-  // 2. Price Extraction & Calculation (ВСЕГДА отталкиваемся от САМОЙ БОЛЬШОЙ суммы)
-  const extracted = extractDetailedPrices(rawText);
-  const smartPrices = calculateSmartPrices(extracted, config.pricing);
+  // 2. Price Extraction & Calculation (только для режима магазина или если включены правила цен)
+  const extracted = isStoreMode || config.pricing?.mode ? extractDetailedPrices(rawText) : { allPrices: [], maxPrice: null, minPrice: null, retailPrice: null, wholesalePrice: null, basePrice: null };
+  const smartPrices = (isStoreMode || config.pricing?.mode) ? calculateSmartPrices(extracted, config.pricing) : null;
 
   const prices = smartPrices ? {
     mode: smartPrices.mode,
@@ -226,7 +228,8 @@ export const processSinglePost = async (
       processedText = await rewriteContent(
         rawText,
         smartPrices,
-        config.removeLinks
+        config.removeLinks,
+        customPrompt
       );
     } catch (e: any) {
       console.error("AI Generation failed:", e);

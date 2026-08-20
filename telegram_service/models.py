@@ -13,3 +13,5 @@ class TelegramMessage:
     has_media: bool
     media_type: Optional[str]
     raw_event: Any  # Для доступа к низкоуровневым данным при необходимости
+    chat_username: Optional[str] = None
+

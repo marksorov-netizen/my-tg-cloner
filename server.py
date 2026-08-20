@@ -2502,7 +2502,7 @@ async def _restart_listeners():
                     client.remove_event_handler(handler)
             except Exception as e:
                 logger.warning(f"[Listeners] Could not clear handlers for user {user_id}: {e}")
-            register_listeners(client, chat_ids=donor_channels)
+            await register_listeners(client, chat_ids=donor_channels)
             logger.info(
                 f"[Listeners] Registered {len(donor_channels)} donor(s) for user {user_id}"
             )
