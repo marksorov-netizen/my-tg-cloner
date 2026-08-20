@@ -26,7 +26,7 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
   const [taskState, setTaskState] = useState<ActiveTaskState>(taskExecutionService.getParserState());
 
   // Multi-donor & Multi-Target channels (up to 3 destination channels simultaneously)
-  const [donors, setDonors] = useState<string[]>(savedCfg.parserDonors.length ? savedCfg.parserDonors : ['@breakingnews_ru']);
+  const [donors, setDonors] = useState<string[]>(savedCfg.parserDonors.length ? savedCfg.parserDonors : ['@durov']);
   const [newDonor, setNewDonor] = useState('');
 
   const [targetChannels, setTargetChannels] = useState<string[]>(savedCfg.parserTargets.length ? savedCfg.parserTargets : ['@my_channel']);

@@ -14,27 +14,27 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
-        cookieDomainRewrite: 'localhost',   // ← Переписываем домен cookie под frontend
+        cookieDomainRewrite: { '*': '' },
       },
       '/auth': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
-        cookieDomainRewrite: 'localhost',
+        cookieDomainRewrite: { '*': '' },
       },
       '/batch': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
-        cookieDomainRewrite: 'localhost',
+        cookieDomainRewrite: { '*': '' },
       },
       '/status': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
-        cookieDomainRewrite: 'localhost',
+        cookieDomainRewrite: { '*': '' },
       },
       '/health': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
-        cookieDomainRewrite: 'localhost',
+        cookieDomainRewrite: { '*': '' },
       },
     },
   },

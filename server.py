@@ -686,7 +686,16 @@ async def batch_fetch(req: FetchRequest, current_user: User = Depends(get_curren
         raise HTTPException(status_code=429, detail=f"Telegram ограничил запросы. Подождите {e.seconds} секунд.", headers={"Retry-After": str(e.seconds)})
     except Exception as e:
         logger.error(f"batch_fetch failed: {e}")
-        raise HTTPException(status_code=400, detail=f"Не удалось прочитать канал: {e}")
+        err_str = str(e)
+        if "UsernameInvalidError" in type(e).__name__ or "Nobody is using this username" in err_str:
+            detail = f"Канал '{clean_target}' не существует в Telegram. Проверьте правильность написания юзернейма."
+        elif "ChannelPrivateError" in type(e).__name__ or "private" in err_str.lower():
+            detail = f"Канал '{clean_target}' является приватным. Для доступа аккаунт должен быть подписан на этот канал."
+        elif "ChatAdminRequiredError" in type(e).__name__:
+            detail = f"Недостаточно прав для чтения канала '{clean_target}'."
+        else:
+            detail = f"Не удалось прочитать канал '{clean_target}': {err_str}"
+        raise HTTPException(status_code=400, detail=detail)
 
 
 @app.post("/batch/send")

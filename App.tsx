@@ -18,7 +18,7 @@ import { processSinglePost } from './services/postProcessor';
 
 const INITIAL_CONFIG: AppConfig = {
   sourceType: SourceType.TELEGRAM,
-  sourceUrl: '@breakingnews_ru',
+  sourceUrl: '@durov',
   destinationChannel: '@my_channel',
   telegramBotToken: '',
   useAI: true,
