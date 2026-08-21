@@ -7,6 +7,7 @@ import { Layout } from './components/Layout';
 
 import { OverviewPage } from './pages/dashboard/OverviewPage';
 import { ParserPage } from './pages/dashboard/ParserPage';
+import { ParsedPostsPage } from './pages/dashboard/ParsedPostsPage';
 import { StorePage } from './pages/dashboard/StorePage';
 import { PromptPage } from './pages/dashboard/PromptPage';
 import { ArticlesPage } from './pages/dashboard/ArticlesPage';
@@ -117,6 +118,15 @@ function App() {
           element={
             <Layout isUserAuthenticated={isUserAuthenticated} config={config}>
               <ParserPage config={config} setConfig={setConfig} />
+            </Layout>
+          }
+        />
+
+        <Route
+          path="/dashboard/parsed-posts"
+          element={
+            <Layout isUserAuthenticated={isUserAuthenticated} config={config}>
+              <ParsedPostsPage />
             </Layout>
           }
         />

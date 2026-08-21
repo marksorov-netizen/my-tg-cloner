@@ -297,9 +297,29 @@ class Order(Base):
     price_at_order = Column(String(100), nullable=True)             # Цена на момент заказа
     comment = Column(Text, nullable=True)
     supplier_message = Column(Text, nullable=True)                  # AI-сгенерированный текст для поставщика
-    status = Column(String(50), default="new")                     # new | confirmed | shipped | done | cancelled
+    article = relationship("ArticleItem", back_populates="orders")
+
+
+class ParsedPostItem(Base):
+    """
+    Запарсенный и опубликованный пост из блока «Парсер ТГ».
+    Хранит ссылки на пост донора, пост в нашем канале, текст и статус.
+    """
+    __tablename__ = "parsed_posts"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    title = Column(String(255), nullable=True)
+    original_text = Column(Text, nullable=True)
+    processed_text = Column(Text, nullable=True)
+    source_channel = Column(String(255), nullable=True)
+    source_msg_id = Column(Integer, nullable=True)
+    target_channel = Column(String(255), nullable=True)
+    target_msg_id = Column(Integer, nullable=True)
+    donor_post_url = Column(String(512), nullable=True)
+    target_post_url = Column(String(512), nullable=True)
+    media_count = Column(Integer, default=0)
+    status = Column(String(50), default="published")   # "published" | "skipped_duplicate" | "error"
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    article = relationship("ArticleItem", back_populates="orders")
 
 

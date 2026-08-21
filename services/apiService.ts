@@ -163,4 +163,22 @@ export const apiService = {
   /** Лог публикаций проекта */
   getProjectLogs: async (id: string, limit = 50): Promise<PostLog[]> =>
     apiFetch(`/api/projects/${id}/logs?limit=${limit}`),
+
+  // ---------- Запарсенные посты (Архив) ----------
+
+  /** Получить архив запарсенных постов */
+  getParsedPosts: async (limit = 100, offset = 0, sourceChannel?: string, targetChannel?: string): Promise<{ status: string; total: number; count: number; posts: any[] }> => {
+    let url = `/api/parsed_posts?limit=${limit}&offset=${offset}`;
+    if (sourceChannel) url += `&source_channel=${encodeURIComponent(sourceChannel)}`;
+    if (targetChannel) url += `&target_channel=${encodeURIComponent(targetChannel)}`;
+    return apiFetch(url);
+  },
+
+  /** Удалить один запарсенный пост */
+  deleteParsedPost: async (id: string): Promise<{ status: string; deleted_id: string }> =>
+    apiFetch(`/api/parsed_posts/${id}`, { method: 'DELETE' }),
+
+  /** Очистить весь архив запарсенных постов */
+  clearParsedPosts: async (): Promise<{ status: string; message: string }> =>
+    apiFetch('/api/parsed_posts', { method: 'DELETE' }),
 };

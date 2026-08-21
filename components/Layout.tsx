@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { LayoutDashboard, Layers, ShoppingBag, Wand2, ChevronRight, LogOut, Menu, X, User, Package } from 'lucide-react';
+import { LayoutDashboard, Layers, ShoppingBag, Wand2, ChevronRight, LogOut, Menu, X, User, Package, Newspaper } from 'lucide-react';
 
 import { ProfileModal } from './ProfileModal';
 import { AppConfig } from '../types';
@@ -29,9 +29,10 @@ export const Layout: React.FC<LayoutProps> = ({ children, isUserAuthenticated, c
   const navItems = [
     { path: '/dashboard', label: 'Обзор', shortLabel: 'Обзор', icon: LayoutDashboard },
     { path: '/dashboard/parser', label: '📰 1. Парсер ТГ каналов', shortLabel: 'Парсер', icon: Layers },
-    { path: '/dashboard/store', label: '🛒 2. Интернет магазин', shortLabel: 'Магазин', icon: ShoppingBag },
-    { path: '/dashboard/orders', label: '📦 3. Склад & Заказы', shortLabel: 'Склад', icon: Package },
-    { path: '/dashboard/prompt', label: '✍️ 4. Промт-инжиниринг', shortLabel: 'Промты', icon: Wand2 },
+    { path: '/dashboard/parsed-posts', label: '📑 2. Запарсенные посты', shortLabel: 'Посты', icon: Newspaper },
+    { path: '/dashboard/store', label: '🛒 3. Интернет магазин', shortLabel: 'Магазин', icon: ShoppingBag },
+    { path: '/dashboard/orders', label: '📦 4. Склад & Заказы', shortLabel: 'Склад', icon: Package },
+    { path: '/dashboard/prompt', label: '✍️ 5. Промт-инжиниринг', shortLabel: 'Промты', icon: Wand2 },
   ];
 
   const handleLogout = async () => {

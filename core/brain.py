@@ -272,16 +272,35 @@ class ProjectBrain:
                 raise RuntimeError("Telegram не авторизован")
             client = tg_manager.client
 
-        # Скачиваем медиа если пост содержал медиа
-        media_file = None
+        # Скачиваем медиа если пост содержал медиа (полная поддержка альбомов!)
+        media_files = []
         temp_dir = os.path.join(os.getcwd(), "temp_media")
         os.makedirs(temp_dir, exist_ok=True)
 
         if message and message.has_media and getattr(message, 'raw_event', None) and getattr(message.raw_event, 'message', None):
-            try:
-                media_file = await client.download_media(message.raw_event.message, file=temp_dir)
-            except Exception as dl_err:
-                logger.warning(f"[Publish] Could not download media for msg {message.message_id}: {dl_err}")
+            raw_msg = message.raw_event.message
+            grouped_id = getattr(raw_msg, 'grouped_id', None)
+            
+            if grouped_id and getattr(raw_msg, 'peer_id', None):
+                try:
+                    around_msgs = await client.get_messages(raw_msg.peer_id, ids=list(range(max(1, raw_msg.id - 10), raw_msg.id + 11)))
+                    album_msgs = [m for m in around_msgs if m and getattr(m, 'grouped_id', None) == grouped_id and m.media]
+                    if album_msgs:
+                        album_msgs.sort(key=lambda m: m.id)
+                        for am in album_msgs:
+                            f = await client.download_media(am, file=temp_dir)
+                            if f and os.path.exists(f):
+                                media_files.append(f)
+                except Exception as alb_err:
+                    logger.warning(f"[Publish] Album download failed: {alb_err}")
+
+            if not media_files:
+                try:
+                    f = await client.download_media(raw_msg, file=temp_dir)
+                    if f and os.path.exists(f):
+                        media_files.append(f)
+                except Exception as dl_err:
+                    logger.warning(f"[Publish] Could not download media for msg {message.message_id}: {dl_err}")
 
         try:
             for target in targets:
@@ -289,20 +308,54 @@ class ProjectBrain:
                 if not clean_target.startswith('@') and not clean_target.startswith('-') and not clean_target.isdigit():
                     clean_target = f"@{clean_target}"
 
+                sent_res = None
                 try:
-                    if media_file and os.path.exists(media_file):
-                        await client.send_file(clean_target, media_file, caption=text)
+                    if len(media_files) > 1:
+                        sent_res = await client.send_file(clean_target, media_files, caption=text)
+                    elif len(media_files) == 1:
+                        sent_res = await client.send_file(clean_target, media_files[0], caption=text)
                     else:
-                        await client.send_message(clean_target, text)
-                    logger.info(f"[Publish] Sent successfully to {clean_target}")
+                        sent_res = await client.send_message(clean_target, text)
+                    logger.info(f"[Publish] Sent successfully to {clean_target} ({len(media_files)} media)")
                 except Exception as t_err:
                     logger.error(f"[Publish] Failed to send to target {clean_target}: {t_err}")
-        finally:
-            if media_file and os.path.exists(media_file):
+
+                # Логируем в parsed_posts
                 try:
-                    os.remove(media_file)
-                except Exception:
-                    pass
+                    from database.session import async_session
+                    from database.models import ParsedPostItem
+                    src_ch = message.channel_name if message else None
+                    src_id = message.message_id if message else None
+                    sent_id = getattr(sent_res, 'id', None) if sent_res else None
+                    donor_url = f"https://t.me/{src_ch.lstrip('@')}/{src_id}" if src_ch and src_id else None
+                    target_url = f"https://t.me/{clean_target.lstrip('@')}/{sent_id}" if clean_target and sent_id else None
+                    first_line = text.strip().split('\n')[0][:120] if text else "Пост из автомониторинга"
+
+                    async with async_session() as s_p:
+                        p_item = ParsedPostItem(
+                            title=first_line,
+                            original_text=message.text if message else text,
+                            processed_text=text,
+                            source_channel=src_ch,
+                            source_msg_id=src_id,
+                            target_channel=clean_target,
+                            target_msg_id=sent_id,
+                            donor_post_url=donor_url,
+                            target_post_url=target_url,
+                            media_count=len(media_files),
+                            status="published"
+                        )
+                        s_p.add(p_item)
+                        await s_p.commit()
+                except Exception as log_err:
+                    logger.warning(f"Could not log parsed post in brain: {log_err}")
+        finally:
+            for f in media_files:
+                if f and os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
 
     # -------------------------------------------------------
     # Удаление ссылок (без AI)

@@ -39,7 +39,7 @@ from fastapi import FastAPI, HTTPException, Depends, Response, Cookie, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -52,7 +52,7 @@ from telethon.errors import (
 )
 from telegram_service.client import tg_manager, user_clients
 from database.session import init_db, get_db, get_system_user_id
-from database.models import Project, Donor, ProjectDonor, Post, User, ArticleItem, OrderBotConfig, Order
+from database.models import Project, Donor, ProjectDonor, Post, User, ArticleItem, OrderBotConfig, Order, ParsedPostItem
 from core.ai_rewriter import call_gemini_with_retry, AIRewriteError
 from core.auth import get_current_user, create_access_token, COOKIE_NAME, COOKIE_MAX_AGE
 
@@ -730,14 +730,15 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
             clean_bot = req.bot_username.lstrip('@')
             buttons = [Button.url(f"🛒 Заказать ({req.article_code})", f"https://t.me/{clean_bot}?start={req.article_code}")]
 
-        # 2. Если переданы source_channel и msg_id, скачиваем медиа (поддержка альбомов/галерей!)
+        # 2. Если переданы source_channel и msg_id, скачиваем медиа (полная поддержка альбомов/галерей!)
         if clean_src and req.msg_id and req.download_media:
             try:
-                src_msg = await client.get_messages(clean_src, ids=req.msg_id)
+                src_entity = await client.get_entity(clean_src)
+                src_msg = await client.get_messages(src_entity, ids=req.msg_id)
 
-                # Получаем сообщения вокрег req.msg_id (от msg_id-10 до msg_id+10) в один клик
-                neighbor_ids = list(range(max(1, req.msg_id - 10), req.msg_id + 10))
-                around_msgs_raw = await client.get_messages(clean_src, ids=neighbor_ids)
+                # Получаем сообщения вокруг req.msg_id (от msg_id-15 до msg_id+15)
+                neighbor_ids = list(range(max(1, req.msg_id - 15), req.msg_id + 16))
+                around_msgs_raw = await client.get_messages(src_entity, ids=neighbor_ids)
                 around_msgs = [m for m in around_msgs_raw if m is not None]
 
                 # 💡 Если картинки отправлены отдельным постом (до или после текста) — ищем их у соседей!
@@ -762,6 +763,14 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
                         ]
                         if album_items:
                             grouped_msgs = sorted(album_items, key=lambda m: m.id)
+                    else:
+                        # Если grouped_id нет, но есть последовательные сообщения с фото/видео (галерея)
+                        adjacent_media = [
+                            m for m in around_msgs
+                            if m.media and (m.id == src_msg.id or (abs(m.id - src_msg.id) <= 4 and (not m.text or len(m.text.strip()) < 10)))
+                        ]
+                        if len(adjacent_media) > 1:
+                            grouped_msgs = sorted(adjacent_media, key=lambda m: m.id)
 
                     # Скачиваем ВСЕ медиа-файлы альбома
                     media_files = []
@@ -775,26 +784,23 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
 
                     if media_files:
                         try:
-                            # 🔍 ПРОВЕРКА НА ВИЗУАЛЬНЫЙ ДУБЛИКАТ ПО ФОТО (24 ЧАСА)
-                            is_photo_dup = False
-                            for f_path in media_files:
-                                if is_visual_duplicate(f_path, max_age_hours=24, max_distance=8):
-                                    is_photo_dup = True
-                                    break
-
-                            if is_photo_dup:
-                                logger.info(f"[Visual Deduplication] Skipping duplicate product photo for msg {req.msg_id}")
+                            # 🔍 ПРОВЕРКА НА ВИЗУАЛЬНЫЙ ДУБЛИКАТ ПО ФОТО (24 ЧАСА) (только для товаров магазина с артикулом)
+                            if req.article_code:
+                                is_photo_dup = False
                                 for f_path in media_files:
-                                    if os.path.exists(f_path):
-                                        try: os.remove(f_path)
-                                        except Exception: pass
-                                return {
-                                    "status": "skipped",
-                                    "reason": "visual_duplicate",
-                                    "detail": "Товар с аналогичным фото уже выкладывался за последние 24 часа"
-                                }
+                                    if is_visual_duplicate(f_path, max_age_hours=24, max_distance=8):
+                                        is_photo_dup = True
+                                        break
 
-                            # Публикация в канал (единым постом с описанием и ссылкой на заказ)
+                                if is_photo_dup:
+                                    logger.info(f"[Visual Deduplication] Skipping duplicate product photo for msg {req.msg_id}")
+                                    return {
+                                        "status": "skipped",
+                                        "reason": "visual_duplicate",
+                                        "detail": "Товар с аналогичным фото уже выкладывался за последние 24 часа"
+                                    }
+
+                            # Публикация в канал (единым постом/альбомом с описанием)
                             sent_res = None
                             if len(media_files) == 1:
                                 try:
@@ -827,6 +833,9 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
                                     sent_msg_id = getattr(sent_res, 'id', None)
                                     sent_msg_ids = [sent_msg_id] if sent_msg_id else []
 
+                            clean_ch_name = clean_dest.lstrip('@')
+                            post_url = f"https://t.me/{clean_ch_name}/{sent_msg_id}" if sent_msg_id else None
+
                             # Привязываем ID отправленного сообщения в НАШЕМ канале к артикулу
                             if req.article_code and sent_msg_id:
                                 try:
@@ -839,12 +848,36 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
                                             art_obj.target_msg_id = sent_msg_id
                                             if sent_msg_ids:
                                                 art_obj.media_urls = [str(x) for x in sent_msg_ids]
-                                            clean_ch_name = clean_dest.lstrip('@')
-                                            art_obj.telegram_post_url = f"https://t.me/{clean_ch_name}/{sent_msg_id}"
+                                            art_obj.telegram_post_url = post_url
                                             await s_art.commit()
-                                            logger.info(f"[Article Link] Linked {req.article_code} to our channel: {art_obj.telegram_post_url} (album msgs: {sent_msg_ids})")
+                                            logger.info(f"[Article Link] Linked {req.article_code} to our channel: {post_url} (album msgs: {sent_msg_ids})")
                                 except Exception as upd_err:
                                     logger.warning(f"[Article Link] Could not update target_msg_id for article {req.article_code}: {upd_err}")
+
+                            # 📝 Логируем в таблицу parsed_posts (Архив запарсенных постов)
+                            try:
+                                from database.session import async_session
+                                donor_url = f"https://t.me/{clean_src.lstrip('@')}/{req.msg_id}" if clean_src and req.msg_id else f"https://t.me/{clean_src.lstrip('@')}" if clean_src else None
+                                first_line = req.text.strip().split('\n')[0][:120] if req.text else "Без названия"
+
+                                async with async_session() as s_p:
+                                    p_item = ParsedPostItem(
+                                        title=first_line,
+                                        original_text=req.text,
+                                        processed_text=req.text,
+                                        source_channel=clean_src,
+                                        source_msg_id=req.msg_id,
+                                        target_channel=clean_dest,
+                                        target_msg_id=sent_msg_id,
+                                        donor_post_url=donor_url,
+                                        target_post_url=post_url,
+                                        media_count=len(media_files),
+                                        status="published"
+                                    )
+                                    s_p.add(p_item)
+                                    await s_p.commit()
+                            except Exception as p_log_err:
+                                logger.warning(f"Could not log to parsed_posts: {p_log_err}")
 
                             logger.info(f"Published media ({len(media_files)} files) for msg {req.msg_id} to {clean_dest}")
 
@@ -854,7 +887,7 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
                             for f_path in media_files:
                                 register_image_hash(f_path, key=msg_key or req.article_code or "")
 
-                            return {"status": "sent", "has_media": True, "media_count": len(media_files), "sent_msg_id": sent_msg_id}
+                            return {"status": "sent", "has_media": True, "media_count": len(media_files), "sent_msg_id": sent_msg_id, "telegram_post_url": post_url}
                         finally:
                             for f_path in media_files:
                                 try:
@@ -875,6 +908,9 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
             sent_txt_res = await client.send_message(clean_dest, req.text)
 
         sent_msg_id = getattr(sent_txt_res, 'id', None) if sent_txt_res else None
+        clean_ch_name = clean_dest.lstrip('@')
+        post_url = f"https://t.me/{clean_ch_name}/{sent_msg_id}" if sent_msg_id else None
+
         if req.article_code and sent_msg_id:
             try:
                 from database.session import async_session
@@ -884,17 +920,41 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
                     if art_obj:
                         art_obj.target_channel = clean_dest
                         art_obj.target_msg_id = sent_msg_id
-                        clean_ch_name = clean_dest.lstrip('@')
-                        art_obj.telegram_post_url = f"https://t.me/{clean_ch_name}/{sent_msg_id}"
+                        art_obj.telegram_post_url = post_url
                         await s_art.commit()
             except Exception:
                 pass
+
+        # 📝 Логируем в таблицу parsed_posts (Архив запарсенных постов)
+        try:
+            from database.session import async_session
+            donor_url = f"https://t.me/{clean_src.lstrip('@')}/{req.msg_id}" if clean_src and req.msg_id else f"https://t.me/{clean_src.lstrip('@')}" if clean_src else None
+            first_line = req.text.strip().split('\n')[0][:120] if req.text else "Без названия"
+
+            async with async_session() as s_p:
+                p_item = ParsedPostItem(
+                    title=first_line,
+                    original_text=req.text,
+                    processed_text=req.text,
+                    source_channel=clean_src,
+                    source_msg_id=req.msg_id,
+                    target_channel=clean_dest,
+                    target_msg_id=sent_msg_id,
+                    donor_post_url=donor_url,
+                    target_post_url=post_url,
+                    media_count=0,
+                    status="published"
+                )
+                s_p.add(p_item)
+                await s_p.commit()
+        except Exception as p_log_err:
+            logger.warning(f"Could not log to parsed_posts: {p_log_err}")
 
         # Регистрируем в памяти дубликатов
         if msg_key: PUBLISHED_POST_KEYS.add(msg_key)
         if text_hash: PUBLISHED_TEXT_HASHES.add(text_hash)
 
-        return {"status": "sent", "has_media": False, "sent_msg_id": sent_msg_id}
+        return {"status": "sent", "has_media": False, "sent_msg_id": sent_msg_id, "telegram_post_url": post_url}
     except FloodWaitError as e:
         raise HTTPException(status_code=429, detail=f"Telegram ограничил отправку. Подождите {e.seconds} секунд.", headers={"Retry-After": str(e.seconds)})
     except (UsernameNotOccupiedError, UsernameInvalidError) as e:
@@ -1855,6 +1915,82 @@ async def list_articles(db: AsyncSession = Depends(get_db)):
             for a in items
         ]
     }
+
+
+# ============================================================
+# Parsed Posts (Архив запарсенных постов / новостей)
+# ============================================================
+
+@app.get("/api/parsed_posts")
+async def list_parsed_posts(
+    limit: int = 100,
+    offset: int = 0,
+    source_channel: Optional[str] = None,
+    target_channel: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Возвращает список всех запарсенных новостей/постов с прямыми ссылками на донора и наш канал."""
+    query = select(ParsedPostItem).order_by(ParsedPostItem.created_at.desc())
+    if source_channel:
+        query = query.where(ParsedPostItem.source_channel.ilike(f"%{source_channel}%"))
+    if target_channel:
+        query = query.where(ParsedPostItem.target_channel.ilike(f"%{target_channel}%"))
+
+    result = await db.execute(query.limit(limit).offset(offset))
+    items = result.scalars().all()
+
+    count_res = await db.execute(select(func.count(ParsedPostItem.id)))
+    total_count = count_res.scalar_one() or 0
+
+    return {
+        "status": "ok",
+        "total": total_count,
+        "count": len(items),
+        "posts": [
+            {
+                "id": p.id,
+                "title": p.title,
+                "original_text": p.original_text,
+                "processed_text": p.processed_text,
+                "source_channel": p.source_channel,
+                "source_msg_id": p.source_msg_id,
+                "target_channel": p.target_channel,
+                "target_msg_id": p.target_msg_id,
+                "donor_post_url": (
+                    p.donor_post_url
+                    or (f"https://t.me/{p.source_channel.lstrip('@')}/{p.source_msg_id}" if p.source_channel and p.source_msg_id else (f"https://t.me/{p.source_channel.lstrip('@')}" if p.source_channel else None))
+                ),
+                "telegram_post_url": (
+                    p.target_post_url
+                    or (f"https://t.me/{p.target_channel.lstrip('@')}/{p.target_msg_id}" if p.target_channel and p.target_msg_id else (f"https://t.me/{p.target_channel.lstrip('@')}" if p.target_channel else None))
+                ),
+                "media_count": p.media_count,
+                "status": p.status,
+                "created_at": p.created_at.isoformat() if p.created_at else None
+            }
+            for p in items
+        ]
+    }
+
+
+@app.delete("/api/parsed_posts/{post_id}")
+async def delete_parsed_post(post_id: str, db: AsyncSession = Depends(get_db)):
+    """Удалить запись о запарсенном посте из архива."""
+    result = await db.execute(select(ParsedPostItem).where(ParsedPostItem.id == post_id))
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Пост не найден")
+    await db.delete(post)
+    await db.commit()
+    return {"status": "ok", "deleted_id": post_id}
+
+
+@app.delete("/api/parsed_posts")
+async def clear_all_parsed_posts(db: AsyncSession = Depends(get_db)):
+    """Очистить весь архив запарсенных постов."""
+    await db.execute(delete(ParsedPostItem))
+    await db.commit()
+    return {"status": "ok", "message": "Архив запарсенных постов очищен"}
 
 
 @app.put("/api/articles/{article_id}/stock")
