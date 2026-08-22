@@ -22,6 +22,9 @@ export interface UserSavedConfig {
 
   copyCount: number;
   intervalMinutes: number;
+
+  enableVideoGen: boolean;
+  videoAspectRatio: '9:16' | '1:1';
 }
 
 const STORAGE_KEY = 'ghostpost_user_saved_channels';
@@ -48,6 +51,9 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
         parserPrompt: parsed.parserPrompt || 'Перепиши текст новости: сделай его ярким, вовлекающим, добавь подходящие эмодзи и разбей на читаемые абзацы.',
         copyCount: parsed.copyCount || 100,
         intervalMinutes: parsed.intervalMinutes !== undefined ? parsed.intervalMinutes : 15,
+
+        enableVideoGen: parsed.enableVideoGen !== undefined ? parsed.enableVideoGen : false,
+        videoAspectRatio: parsed.videoAspectRatio || '9:16',
       };
     }
   } catch {}
@@ -66,6 +72,9 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
     parserPrompt: 'Перепиши текст новости: сделай его ярким, вовлекающим, добавь подходящие эмодзи и разбей на читаемые абзацы.',
     copyCount: 100,
     intervalMinutes: 15,
+
+    enableVideoGen: false,
+    videoAspectRatio: '9:16',
   };
 };
 

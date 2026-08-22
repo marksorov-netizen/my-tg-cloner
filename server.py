@@ -213,6 +213,9 @@ class SendRequest(BaseModel):
     download_media: Optional[bool] = True
     article_code: Optional[str] = None
     bot_username: Optional[str] = None
+    generate_video: Optional[bool] = False
+    video_aspect_ratio: Optional[str] = "9:16"
+    product_price: Optional[str] = None
 
 
 class RewriteRequest(BaseModel):
@@ -878,6 +881,64 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
                                     await s_p.commit()
                             except Exception as p_log_err:
                                 logger.warning(f"Could not log to parsed_posts: {p_log_err}")
+
+                            # 🎬 ОПЦИЯ VIP: AI Генерация промо-видео из тех же фото и публикация отдельного видео-поста
+                            video_sent_id = None
+                            video_post_url = None
+                            if req.generate_video and media_files:
+                                try:
+                                    from core.video_generator import video_generator
+                                    first_line_title = req.text.strip().split('\n')[0][:80] if req.text else "Товар"
+                                    video_path = await video_generator.generate_product_video(
+                                        image_paths=media_files,
+                                        title=first_line_title,
+                                        price=req.product_price,
+                                        article_code=req.article_code,
+                                        duration_per_slide=2.5,
+                                        aspect_ratio=req.video_aspect_ratio or "9:16"
+                                    )
+
+                                    if video_path and os.path.exists(video_path):
+                                        logger.info(f"[VIP Video Post] Publishing generated video review for {req.article_code or 'post'} to {clean_dest}")
+                                        sent_vid_res = await client.send_file(
+                                            clean_dest,
+                                            video_path,
+                                            caption=req.text,
+                                            buttons=buttons
+                                        )
+                                        video_sent_id = getattr(sent_vid_res, 'id', None)
+                                        if video_sent_id:
+                                            video_post_url = f"https://t.me/{clean_ch_name}/{video_sent_id}"
+                                            logger.info(f"[VIP Video Post] Published successfully: {video_post_url}")
+
+                                            # Логируем видео-пост в архив
+                                            try:
+                                                async with async_session() as s_vid:
+                                                    v_item = ParsedPostItem(
+                                                        title=f"🎬 [Видео-обзор] {first_line_title}",
+                                                        original_text=req.text,
+                                                        processed_text=req.text,
+                                                        source_channel=clean_src,
+                                                        source_msg_id=req.msg_id,
+                                                        target_channel=clean_dest,
+                                                        target_msg_id=video_sent_id,
+                                                        donor_post_url=donor_url,
+                                                        target_post_url=video_post_url,
+                                                        media_count=1,
+                                                        status="published"
+                                                    )
+                                                    s_vid.add(v_item)
+                                                    await s_vid.commit()
+                                            except Exception:
+                                                pass
+
+                                        try:
+                                            if os.path.exists(video_path):
+                                                os.remove(video_path)
+                                        except Exception:
+                                            pass
+                                except Exception as vid_err:
+                                    logger.warning(f"[VIP Video Post] Video generation/send failed: {vid_err}")
 
                             logger.info(f"Published media ({len(media_files)} files) for msg {req.msg_id} to {clean_dest}")
 

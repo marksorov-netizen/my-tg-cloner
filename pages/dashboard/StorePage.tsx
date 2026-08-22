@@ -51,6 +51,10 @@ export const StorePage: React.FC<StorePageProps> = ({ config, setConfig }) => {
   // HYBRID MODE: Enable Live Monitoring after Batch Copy
   const [enableLiveMonitoringAfterBatch, setEnableLiveMonitoringAfterBatch] = useState<boolean>(true);
 
+  // VIP AI Video Generation
+  const [enableVideoGen, setEnableVideoGen] = useState<boolean>(savedCfg.enableVideoGen || false);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<'9:16' | '1:1'>(savedCfg.videoAspectRatio || '9:16');
+
   // Toggles
   const [filterAds, setFilterAds] = useState(true);
   const [downloadPhotos, setDownloadPhotos] = useState(true);
@@ -317,7 +321,10 @@ export const StorePage: React.FC<StorePageProps> = ({ config, setConfig }) => {
             msg.id,
             downloadPhotos,
             articleCode || undefined,
-            botUsername || undefined
+            botUsername || undefined,
+            enableVideoGen,
+            videoAspectRatio,
+            result.calculatedPrice ? `${result.calculatedPrice} ${currency}` : undefined
           );
           
           if (sendRes && sendRes.status === 'skipped') {
@@ -849,6 +856,66 @@ export const StorePage: React.FC<StorePageProps> = ({ config, setConfig }) => {
                 <span>🔴 После публикации {copyCount} постов переключиться в режим ЖИВОГО МОНИТОРИНГА НОВЫХ ПОСТОВ</span>
               </label>
             </div>
+          </div>
+
+          {/* VIP AI VIDEO GENERATION BLOCK */}
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(230,57,70,0.12), rgba(0,0,0,0.5))',
+            border: '1px solid rgba(230,57,70,0.3)',
+            borderRadius: 20, padding: 22,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 22 }}>🎬</span>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
+                    AI Видео-генерация контента (Image-to-Video)
+                  </div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>
+                    Создает видео-обзор из фото товара и делает отдельный видео-пост
+                  </div>
+                </div>
+              </div>
+              <span style={{
+                background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                color: '#000', fontSize: 10, fontWeight: 900,
+                padding: '3px 8px', borderRadius: 6, letterSpacing: 0.5
+              }}>
+                👑 VIP / MAX
+              </span>
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: '#fff', fontWeight: 600, marginTop: 10 }}>
+              <input
+                type="checkbox"
+                checked={enableVideoGen}
+                onChange={e => {
+                  setEnableVideoGen(e.target.checked);
+                  saveUserSavedConfig({ enableVideoGen: e.target.checked });
+                }}
+                style={{ width: 18, height: 18, accentColor: '#e63946' }}
+              />
+              <span>Включить создание промо-видео (пост с фото + второй пост с видео)</span>
+            </label>
+
+            {enableVideoGen && (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>Формат видео:</label>
+                <select
+                  value={videoAspectRatio}
+                  onChange={e => {
+                    const val = e.target.value as '9:16' | '1:1';
+                    setVideoAspectRatio(val);
+                    saveUserSavedConfig({ videoAspectRatio: val });
+                  }}
+                  style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '6px 12px', color: '#fff', fontSize: 12, outline: 'none' }}
+                >
+                  <option value="9:16">📱 9:16 Вертикальный (Stories / Reels / Shorts)</option>
+                  <option value="1:1">⬛ 1:1 Квадратный</option>
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Toggles */}

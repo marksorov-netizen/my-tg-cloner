@@ -109,7 +109,10 @@ export const apiService = {
     msgId?: number,
     downloadMedia: boolean = true,
     articleCode?: string,
-    botUsername?: string
+    botUsername?: string,
+    generateVideo: boolean = false,
+    videoAspectRatio: string = '9:16',
+    productPrice?: string
   ) =>
     apiFetch('/batch/send', {
       method: 'POST',
@@ -121,6 +124,9 @@ export const apiService = {
         download_media: downloadMedia,
         article_code: articleCode,
         bot_username: botUsername,
+        generate_video: generateVideo,
+        video_aspect_ratio: videoAspectRatio,
+        product_price: productPrice,
       }),
     }),
 
