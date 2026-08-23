@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { LayoutDashboard, Layers, ShoppingBag, Wand2, ChevronRight, LogOut, Menu, X, User, Package, Newspaper } from 'lucide-react';
+import { LayoutDashboard, Layers, ShoppingBag, Wand2, ChevronRight, LogOut, Menu, X, User, Package, Newspaper, Settings } from 'lucide-react';
 
 import { ProfileModal } from './ProfileModal';
 import { AppConfig } from '../types';
@@ -33,6 +33,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, isUserAuthenticated, c
     { path: '/dashboard/store', label: '🛒 3. Интернет магазин', shortLabel: 'Магазин', icon: ShoppingBag },
     { path: '/dashboard/orders', label: '📦 4. Склад & Заказы', shortLabel: 'Склад', icon: Package },
     { path: '/dashboard/prompt', label: '✍️ 5. Промт-инжиниринг', shortLabel: 'Промты', icon: Wand2 },
+    { path: '/dashboard/settings', label: '⚙️ 6. Настройки & AI Видео', shortLabel: 'Настройки', icon: Settings },
   ];
 
   const handleLogout = async () => {
