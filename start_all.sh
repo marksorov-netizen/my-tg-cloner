@@ -17,7 +17,7 @@ sleep 3
 echo "[2/3] Starting Telegram Order Bot..."
 python -u order_bot_handler.py &
 
-# Start Frontend (Vite) in foreground
+# Start Frontend in production mode (serves pre-built dist/ instantly with 0% CPU)
 echo "[3/3] Starting Admin UI & Landing Page (Port 5173)..."
-npm run dev -- --host 0.0.0.0 --port 5173
+npm run preview -- --host 0.0.0.0 --port 5173
 

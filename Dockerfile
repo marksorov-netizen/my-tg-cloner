@@ -26,6 +26,9 @@ RUN npm install
 # Copy application files
 COPY . .
 
+# Pre-build frontend for ultra-fast production performance
+RUN npm run build
+
 # Make start script executable
 RUN chmod +x /app/start_all.sh
 
