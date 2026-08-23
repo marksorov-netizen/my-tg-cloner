@@ -19,6 +19,8 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   return data as T;
 }
 
+import { loadUserSavedConfig, saveUserSavedConfig } from '../services/userConfig';
+
 interface ConfigPageProps {
   config: AppConfig;
   setConfig: (c: AppConfig) => void;
@@ -66,6 +68,8 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 // Главный компонент
 // -------------------------------------------------------
 export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => {
+  const savedCfg = loadUserSavedConfig();
+
   // Список проектов
   const [projects, setProjects]     = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -82,12 +86,20 @@ export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => 
   const [checkInterval, setCheckInterval]         = useState(config.checkInterval);
   const [pricingEnabled, setPricingEnabled]       = useState(false);
 
-  // AI провайдер
+  // AI провайдер текста
   const [aiProvider, setAiProvider] = useState<'platform' | 'own_gemini' | 'own_openrouter'>('platform');
   const [ownAiKey, setOwnAiKey]     = useState('');
   const [hasOwnKey, setHasOwnKey]   = useState(false);
   const [testingKey, setTestingKey] = useState(false);
   const [keyTestResult, setKeyTestResult] = useState<{ok: boolean; msg: string} | null>(null);
+
+  // AI Видео-генерация & Нейросети
+  const [videoProvider, setVideoProvider] = useState<'builtin' | 'seedance' | 'replicate' | 'luma' | 'runway'>(savedCfg.videoProvider || 'builtin');
+  const [videoApiKey, setVideoApiKey]     = useState(savedCfg.videoApiKey || '');
+  const [videoMotionStyle, setVideoMotionStyle] = useState<'trending_cinematic' | 'studio_rotation' | 'lifestyle_motion' | 'fast_reels'>(savedCfg.videoMotionStyle || 'trending_cinematic');
+  const [videoAutoPrompt, setVideoAutoPrompt]   = useState<boolean>(savedCfg.videoAutoPrompt !== undefined ? savedCfg.videoAutoPrompt : true);
+  const [testingPrompt, setTestingPrompt]       = useState(false);
+  const [testPromptOutput, setTestPromptOutput] = useState<string | null>(null);
 
   // Toast
   const [toast, setToast] = useState<Toast | null>(null);
@@ -184,6 +196,13 @@ export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => 
     };
 
     try {
+      saveUserSavedConfig({
+        videoProvider,
+        videoApiKey,
+        videoMotionStyle,
+        videoAutoPrompt,
+      });
+
       let saved: Project;
       if (activeProjectId) {
         saved = await apiService.updateProject(activeProjectId, payload);
@@ -198,6 +217,22 @@ export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => 
       showToast('error', `Ошибка: ${e.message}`);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // ---- Тест промта Gemini Vision ----
+  const handleTestPrompt = async () => {
+    setTestingPrompt(true);
+    setTestPromptOutput(null);
+    try {
+      const res = await apiService.testVideoPrompt('Кроссовки Nike Air Max', videoMotionStyle);
+      if (res && res.generated_prompt) {
+        setTestPromptOutput(res.generated_prompt);
+      }
+    } catch (e: any) {
+      setTestPromptOutput(`Ошибка генерации промта: ${e.message}`);
+    } finally {
+      setTestingPrompt(false);
     }
   };
 
@@ -526,6 +561,112 @@ export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => 
                 </p>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* 🎬 AI Видео-генераторы (Image-to-Video & Seedance / Replicate / Luma / Runway) */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:col-span-2">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+              <span>🎬</span> AI Видео-генераторы & Нейросети (Image-to-Video)
+            </h3>
+            <span className="bg-gradient-to-r from-amber-500 to-amber-600 text-slate-900 text-xs font-black px-2.5 py-1 rounded-md tracking-wider">
+              👑 ТАРИФ VIP / MAX
+            </span>
+          </div>
+          <p className="text-sm text-slate-500 mb-5">
+            Подключите внешние нейросети генерации видео из фото товара или используйте встроенный бесплатный движок Turbo HD.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Выбор видео-провайдера */}
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-slate-700">Видео-нейросеть / Движок</label>
+              <select
+                value={videoProvider}
+                onChange={e => setVideoProvider(e.target.value as any)}
+                className="w-full border border-slate-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-rose-500 focus:outline-none font-medium"
+              >
+                <option value="builtin">⚡ Встроенный Turbo HD (Бесплатно, 0 ₽, быстро)</option>
+                <option value="seedance">💃 Seedance AI API (ByteDance e-commerce video)</option>
+                <option value="replicate">🤖 Replicate API (Kling AI 1.6 / Wan2.1 / MiniMax)</option>
+                <option value="luma">🎥 Luma Dream Machine API (3D облёт товара)</option>
+                <option value="runway">✨ Runway Gen-3 Alpha API (Ultra Cinema)</option>
+              </select>
+            </div>
+
+            {/* Стиль движения */}
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-slate-700">Трендовый стиль анимации</label>
+              <select
+                value={videoMotionStyle}
+                onChange={e => setVideoMotionStyle(e.target.value as any)}
+                className="w-full border border-slate-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-rose-500 focus:outline-none"
+              >
+                <option value="trending_cinematic">🔥 Кинематографичный 360-облёт со студийным светом</option>
+                <option value="studio_rotation">🏷️ Студийный 360-поворот на подиуме с отражениями</option>
+                <option value="lifestyle_motion">✨ Лайфстайл зум и мягкие солнечные блики</option>
+                <option value="fast_reels">⚡ Быстрый ритмичный промо-ролик для Reels/Shorts</option>
+              </select>
+            </div>
+
+            {/* Поле API ключа */}
+            {videoProvider !== 'builtin' && (
+              <div className="md:col-span-2 space-y-3 p-4 bg-rose-50 rounded-xl border border-rose-100">
+                <div className="flex items-start gap-2">
+                  <Shield className="w-4 h-4 text-rose-500 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-rose-800">
+                    API-ключ для <strong>{videoProvider.toUpperCase()}</strong>:
+                    {videoApiKey ? ' ключ сохранён. Оставьте поле пустым, чтобы не менять.' : ' введите ваш токен от сервиса.'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={videoApiKey}
+                    onChange={e => setVideoApiKey(e.target.value)}
+                    placeholder={videoProvider === 'seedance' ? 'seedance-api-key...' : videoProvider === 'replicate' ? 'r8_...' : 'api-key-...'}
+                    className="flex-1 border border-slate-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-rose-500 focus:outline-none font-mono text-sm"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Gemini Vision Auto Prompting */}
+            <div className="md:col-span-2 p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">👁️</span>
+                    <p className="font-semibold text-slate-900 text-sm">Gemini Vision: Умный авто-промт для видео</p>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Gemini анализирует фото товара и составляет кинематографичный промт, <strong>строго сохраняя 100% деталей, расцветку и логотипы</strong>.
+                  </p>
+                </div>
+                <Toggle checked={videoAutoPrompt} onChange={setVideoAutoPrompt} />
+              </div>
+
+              {/* Тестирование промта */}
+              <div className="mt-3 pt-3 border-t border-slate-200 flex items-center justify-between flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleTestPrompt}
+                  disabled={testingPrompt}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-semibold hover:bg-slate-900 disabled:opacity-50 transition-colors"
+                >
+                  {testingPrompt ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-amber-400" />}
+                  {testingPrompt ? 'Составление промта...' : '🧪 Проверить промт Gemini Vision'}
+                </button>
+              </div>
+
+              {testPromptOutput && (
+                <div className="mt-3 p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-800 leading-relaxed">
+                  <span className="font-bold text-emerald-700">Сгенерированный промт для нейросети:</span><br/>
+                  {testPromptOutput}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

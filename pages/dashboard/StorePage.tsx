@@ -54,6 +54,9 @@ export const StorePage: React.FC<StorePageProps> = ({ config, setConfig }) => {
   // VIP AI Video Generation
   const [enableVideoGen, setEnableVideoGen] = useState<boolean>(savedCfg.enableVideoGen || false);
   const [videoAspectRatio, setVideoAspectRatio] = useState<'9:16' | '1:1'>(savedCfg.videoAspectRatio || '9:16');
+  const [videoProvider, setVideoProvider] = useState<'builtin' | 'seedance' | 'replicate' | 'luma' | 'runway'>(savedCfg.videoProvider || 'builtin');
+  const [videoApiKey, setVideoApiKey]     = useState<string>(savedCfg.videoApiKey || '');
+  const [videoMotionStyle, setVideoMotionStyle] = useState<'trending_cinematic' | 'studio_rotation' | 'lifestyle_motion' | 'fast_reels'>(savedCfg.videoMotionStyle || 'trending_cinematic');
 
   // Toggles
   const [filterAds, setFilterAds] = useState(true);
@@ -324,7 +327,11 @@ export const StorePage: React.FC<StorePageProps> = ({ config, setConfig }) => {
             botUsername || undefined,
             enableVideoGen,
             videoAspectRatio,
-            result.calculatedPrice ? `${result.calculatedPrice} ${currency}` : undefined
+            result.calculatedPrice ? `${result.calculatedPrice} ${currency}` : undefined,
+            videoProvider,
+            videoApiKey || undefined,
+            videoMotionStyle,
+            true
           );
           
           if (sendRes && sendRes.status === 'skipped') {
@@ -900,20 +907,41 @@ export const StorePage: React.FC<StorePageProps> = ({ config, setConfig }) => {
             </label>
 
             {enableVideoGen && (
-              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                <label style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>Формат видео:</label>
-                <select
-                  value={videoAspectRatio}
-                  onChange={e => {
-                    const val = e.target.value as '9:16' | '1:1';
-                    setVideoAspectRatio(val);
-                    saveUserSavedConfig({ videoAspectRatio: val });
-                  }}
-                  style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '6px 12px', color: '#fff', fontSize: 12, outline: 'none' }}
-                >
-                  <option value="9:16">📱 9:16 Вертикальный (Stories / Reels / Shorts)</option>
-                  <option value="1:1">⬛ 1:1 Квадратный</option>
-                </select>
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <label style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>Движок генерации:</label>
+                  <select
+                    value={videoProvider}
+                    onChange={e => {
+                      const val = e.target.value as any;
+                      setVideoProvider(val);
+                      saveUserSavedConfig({ videoProvider: val });
+                    }}
+                    style={{ flex: 1, minWidth: 200, background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '6px 12px', color: '#fff', fontSize: 12, outline: 'none' }}
+                  >
+                    <option value="builtin">⚡ Встроенный Turbo HD (0 ₽, моментально)</option>
+                    <option value="seedance">💃 Seedance AI API (ByteDance video)</option>
+                    <option value="replicate">🤖 Replicate API (Kling AI / Wan2.1)</option>
+                    <option value="luma">🎥 Luma Dream Machine API</option>
+                    <option value="runway">✨ Runway Gen-3 Alpha API</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <label style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>Формат видео:</label>
+                  <select
+                    value={videoAspectRatio}
+                    onChange={e => {
+                      const val = e.target.value as '9:16' | '1:1';
+                      setVideoAspectRatio(val);
+                      saveUserSavedConfig({ videoAspectRatio: val });
+                    }}
+                    style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '6px 12px', color: '#fff', fontSize: 12, outline: 'none' }}
+                  >
+                    <option value="9:16">📱 9:16 Вертикальный (Stories / Reels)</option>
+                    <option value="1:1">⬛ 1:1 Квадратный</option>
+                  </select>
+                </div>
               </div>
             )}
           </div>

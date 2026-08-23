@@ -112,7 +112,11 @@ export const apiService = {
     botUsername?: string,
     generateVideo: boolean = false,
     videoAspectRatio: string = '9:16',
-    productPrice?: string
+    productPrice?: string,
+    videoProvider: string = 'builtin',
+    videoApiKey?: string,
+    videoMotionStyle: string = 'trending_cinematic',
+    videoAutoPrompt: boolean = true
   ) =>
     apiFetch('/batch/send', {
       method: 'POST',
@@ -127,7 +131,18 @@ export const apiService = {
         generate_video: generateVideo,
         video_aspect_ratio: videoAspectRatio,
         product_price: productPrice,
+        video_provider: videoProvider,
+        video_api_key: videoApiKey || undefined,
+        video_motion_style: videoMotionStyle,
+        video_auto_prompt: videoAutoPrompt,
       }),
+    }),
+
+  /** Тестовая генерация промта через Gemini Vision */
+  testVideoPrompt: async (title: string, motionStyle = 'trending_cinematic') =>
+    apiFetch('/api/video/test_prompt', {
+      method: 'POST',
+      body: JSON.stringify({ title, motion_style: motionStyle }),
     }),
 
   // ---------- CRUD Проектов ----------

@@ -216,6 +216,10 @@ class SendRequest(BaseModel):
     generate_video: Optional[bool] = False
     video_aspect_ratio: Optional[str] = "9:16"
     product_price: Optional[str] = None
+    video_provider: Optional[str] = "builtin"
+    video_api_key: Optional[str] = None
+    video_motion_style: Optional[str] = "trending_cinematic"
+    video_auto_prompt: Optional[bool] = True
 
 
 class RewriteRequest(BaseModel):
@@ -895,7 +899,11 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
                                         price=req.product_price,
                                         article_code=req.article_code,
                                         duration_per_slide=2.5,
-                                        aspect_ratio=req.video_aspect_ratio or "9:16"
+                                        aspect_ratio=req.video_aspect_ratio or "9:16",
+                                        provider=req.video_provider or "builtin",
+                                        api_key=req.video_api_key,
+                                        motion_style=req.video_motion_style or "trending_cinematic",
+                                        auto_prompt_ai=True if req.video_auto_prompt is None else req.video_auto_prompt
                                     )
 
                                     if video_path and os.path.exists(video_path):
@@ -2052,6 +2060,39 @@ async def clear_all_parsed_posts(db: AsyncSession = Depends(get_db)):
     await db.execute(delete(ParsedPostItem))
     await db.commit()
     return {"status": "ok", "message": "Архив запарсенных постов очищен"}
+
+
+class VideoPromptTestRequest(BaseModel):
+    title: str = "Кроссовки Nike Air Max"
+    motion_style: str = "trending_cinematic"
+
+
+@app.post("/api/video/test_prompt")
+async def test_video_prompt(req: VideoPromptTestRequest):
+    """Тестовая генерация кинематографичного промта через Gemini Vision."""
+    from core.video_generator import video_generator
+    # Если локального тестового файла нет — создаем временный пустой кадр
+    temp_test = os.path.join(os.getcwd(), "temp_media", "test_sample.jpg")
+    os.makedirs(os.path.dirname(temp_test), exist_ok=True)
+    if not os.path.exists(temp_test):
+        from PIL import Image, ImageDraw
+        im = Image.new("RGB", (600, 600), (40, 40, 40))
+        d = ImageDraw.Draw(im)
+        d.text((100, 280), req.title, fill=(255, 255, 255))
+        im.save(temp_test)
+
+    prompt = await video_generator.generate_ai_motion_prompt(
+        image_path=temp_test,
+        title=req.title,
+        motion_style=req.motion_style
+    )
+    return {
+        "status": "ok",
+        "title": req.title,
+        "motion_style": req.motion_style,
+        "generated_prompt": prompt
+    }
+
 
 
 @app.put("/api/articles/{article_id}/stock")

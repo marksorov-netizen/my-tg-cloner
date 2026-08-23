@@ -25,6 +25,10 @@ export interface UserSavedConfig {
 
   enableVideoGen: boolean;
   videoAspectRatio: '9:16' | '1:1';
+  videoProvider: 'builtin' | 'seedance' | 'replicate' | 'luma' | 'runway';
+  videoApiKey: string;
+  videoMotionStyle: 'trending_cinematic' | 'studio_rotation' | 'lifestyle_motion' | 'fast_reels';
+  videoAutoPrompt: boolean;
 }
 
 const STORAGE_KEY = 'ghostpost_user_saved_channels';
@@ -54,6 +58,10 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
 
         enableVideoGen: parsed.enableVideoGen !== undefined ? parsed.enableVideoGen : false,
         videoAspectRatio: parsed.videoAspectRatio || '9:16',
+        videoProvider: parsed.videoProvider || 'builtin',
+        videoApiKey: parsed.videoApiKey || '',
+        videoMotionStyle: parsed.videoMotionStyle || 'trending_cinematic',
+        videoAutoPrompt: parsed.videoAutoPrompt !== undefined ? parsed.videoAutoPrompt : true,
       };
     }
   } catch {}
@@ -75,6 +83,10 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
 
     enableVideoGen: false,
     videoAspectRatio: '9:16',
+    videoProvider: 'builtin',
+    videoApiKey: '',
+    videoMotionStyle: 'trending_cinematic',
+    videoAutoPrompt: true,
   };
 };
 
