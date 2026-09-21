@@ -322,11 +322,13 @@ def _project_to_dict(project: Project, donor_channel_id: str = "") -> dict:
 # ============================================================
 
 @app.get("/status")
-async def status(access_token: Optional[str] = Cookie(default=None)):
-    # Статус строится по JWT-cookie: каждый пользователь видит СВОЙ Telegram-аккаунт.
-    # Без cookie возвращаем 200 + unauthorized (так ждёт фронтенд).
+async def status(
+    access_token: Optional[str] = Cookie(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
+    # Статус строится по JWT-cookie или Authorization header
     try:
-        current_user = await get_current_user(access_token)
+        current_user = await get_current_user(access_token, authorization)
     except HTTPException:
         current_user = None
     if current_user and await user_clients.is_authorized(current_user):
@@ -612,12 +614,16 @@ async def stop_tasks(current_user: User = Depends(get_current_user)):
 
 
 @app.post("/auth/logout")
-async def logout(response: Response, access_token: Optional[str] = Cookie(default=None)):
+async def logout(
+    response: Response,
+    access_token: Optional[str] = Cookie(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     # Стираем cookie + отключаем Telegram-клиента ТОЛЬКО этого пользователя.
     # Глобальная системная сессия (для бота заказов) не трогается.
     response.delete_cookie(key=COOKIE_NAME, samesite="lax")
     try:
-        current_user = await get_current_user(access_token)
+        current_user = await get_current_user(access_token, authorization)
         await user_clients.disconnect_user(current_user.id)
     except HTTPException:
         pass

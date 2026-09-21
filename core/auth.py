@@ -83,9 +83,10 @@ async def get_current_user(
     FastAPI dependency: читает httpOnly cookie или заголовок Authorization: Bearer <token>,
     декодирует JWT, возвращает User из БД.
     """
-    token = access_token
-    if not token and authorization and authorization.lower().startswith("bearer "):
-        token = authorization[7:].strip()
+    token = access_token if isinstance(access_token, str) else None
+    auth_header = authorization if isinstance(authorization, str) else None
+    if not token and auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
 
     if not token:
         is_prod = os.getenv("ENVIRONMENT", "").lower() in ("prod", "production") or os.getenv("PROD", "").lower() in ("1", "true")
