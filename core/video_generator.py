@@ -75,7 +75,10 @@ class ProductVideoGenerator:
                 return default_prompt
 
             genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
+            try:
+                model = genai.GenerativeModel("gemini-3.6-flash")
+            except Exception:
+                model = genai.GenerativeModel("gemini-2.5-flash")
 
             with Image.open(image_path) as pil_img:
                 rgb_img = pil_img.convert("RGB")
@@ -580,8 +583,24 @@ class ProductVideoGenerator:
         async with _RENDER_SEMAPHORE:
             primary_image = valid_images[0]
 
-            # 1. Попытка генерации через внешний AI провайдер
-            if provider and provider != "builtin" and api_key and api_key.strip():
+            # 1. Fashion Multi-Color Engine (все расцветки одежды + нейро-озвучка + 9:16 монтаж)
+            if provider == "fashion_multicolor" or motion_style == "fashion_multicolor":
+                try:
+                    from core.fashion_video_engine import fashion_video_engine
+                    res_video = await fashion_video_engine.create_multi_color_video(
+                        image_paths=valid_images,
+                        title=title,
+                        price=price,
+                        article_code=article_code
+                    )
+                    if res_video and os.path.exists(res_video):
+                        logger.info(f"Generated multi-color Fashion video: {res_video}")
+                        return res_video
+                except Exception as fe:
+                    logger.warning(f"Fashion video engine failed: {fe}. Falling back...")
+
+            # 2. Попытка генерации через внешний AI провайдер (Seedance / Replicate / Luma / Runway)
+            if provider and provider not in ("builtin", "fashion_multicolor") and api_key and api_key.strip():
                 try:
                     # Генерируем промт через Gemini Vision
                     if auto_prompt_ai:

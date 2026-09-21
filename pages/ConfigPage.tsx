@@ -71,8 +71,11 @@ function DarkToggle({ checked, onChange }: { checked: boolean; onChange: (v: boo
 export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => {
   const savedCfg = loadUserSavedConfig();
 
-  // 1. AI Видео-генерация & Нейросети (Seedance / Replicate / Luma / Runway / Builtin)
-  const [videoProvider, setVideoProvider] = useState<'builtin' | 'seedance' | 'replicate' | 'luma' | 'runway'>(savedCfg.videoProvider || 'builtin');
+  // 👗 Виртуальная примерка на фирменную модель (VTON)
+  const [enableVton, setEnableVton] = useState<boolean>(savedCfg.enableVton || false);
+
+  // 1. AI Видео-генерация & Нейросети (Fashion Multi-Color / Seedance / Replicate / Luma / Runway / Builtin)
+  const [videoProvider, setVideoProvider] = useState<'builtin' | 'fashion_multicolor' | 'seedance' | 'replicate' | 'luma' | 'runway'>(savedCfg.videoProvider || 'builtin');
   const [videoApiKey, setVideoApiKey] = useState(savedCfg.videoApiKey || '');
   const [videoMotionStyle, setVideoMotionStyle] = useState<'trending_cinematic' | 'studio_rotation' | 'lifestyle_motion' | 'fast_reels'>(savedCfg.videoMotionStyle || 'trending_cinematic');
   const [videoAutoPrompt, setVideoAutoPrompt] = useState<boolean>(savedCfg.videoAutoPrompt !== undefined ? savedCfg.videoAutoPrompt : true);
@@ -80,10 +83,11 @@ export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => 
   const [testPromptOutput, setTestPromptOutput] = useState<string | null>(null);
 
   // 2. AI Текстовый рерайт (Подписка платформы / Личный Gemini / Личный OpenRouter)
+  // ВАЖНО: личный ключ держим только в памяти (useState), НЕ сохраняем в localStorage.
   const [textAiProvider, setTextAiProvider] = useState<'platform' | 'own_gemini' | 'own_openrouter'>(
     (localStorage.getItem('ghostpost_text_ai_provider') as any) || 'platform'
   );
-  const [textAiKey, setTextAiKey] = useState(localStorage.getItem('ghostpost_text_ai_key') || '');
+  const [textAiKey, setTextAiKey] = useState('');
   const [testingTextKey, setTestingTextKey] = useState(false);
   const [textKeyTestResult, setTextKeyTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
@@ -138,19 +142,20 @@ export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => 
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // Сохраняем настройки видео-генератора
+      // Сохраняем настройки видео-генератора (ключ уйдет в sessionStorage, см. userConfig.ts)
       saveUserSavedConfig({
+        enableVton,
         videoProvider,
         videoApiKey,
         videoMotionStyle,
         videoAutoPrompt,
       });
 
-      // Сохраняем настройки текстового рерайтера
+      // Сохраняем только провайдер текстового AI. Сам ключ НЕ персистим —
+      // он живет только в памяти до перезагрузки и проверяется через backend.
       localStorage.setItem('ghostpost_text_ai_provider', textAiProvider);
-      localStorage.setItem('ghostpost_text_ai_key', textAiKey.trim());
 
-      showToast('success', '✅ Настройки AI и API-ключи успешно сохранены');
+      showToast('success', '✅ Настройки AI сохранены (ключи — только до перезагрузки вкладки)');
     } catch (e: any) {
       showToast('error', `Ошибка при сохранении: ${e.message}`);
     } finally {
@@ -194,6 +199,47 @@ export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => 
           {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
           {isSaving ? 'Сохранение...' : 'Сохранить настройки'}
         </button>
+      </div>
+
+      {/* 👗 БЛОК: ВИРТУАЛЬНАЯ ПРИМЕРКА НА ФИРМЕННУЮ МОДЕЛЬ (VTON) */}
+      <div style={{
+        background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(0,0,0,0.6))',
+        border: '1px solid rgba(16,185,129,0.35)',
+        borderRadius: 20, padding: 24, boxShadow: '0 4px 30px rgba(0,0,0,0.4)',
+        display: 'flex', flexDirection: 'column', gap: 16
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 42, height: 42, borderRadius: 12, background: 'rgba(16,185,129,0.2)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22
+            }}>
+              👗
+            </div>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+                Виртуальная примерка на фирменную модель (VTON)
+                <span style={{
+                  background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid #10b981',
+                  fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 6
+                }}>
+                  0 ₽ / БЕСПЛАТНО
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+                Замена фото доноров (диваны, пол, водяные знаки) на студийные фото с нашей моделью-брюнеткой
+              </div>
+            </div>
+          </div>
+          <DarkToggle checked={enableVton} onChange={setEnableVton} />
+        </div>
+
+        <div style={{
+          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 14, padding: 16, fontSize: 13, color: 'rgba(255,255,255,0.7)', lineHeight: 1.6
+        }}>
+          💡 <strong>Как это работает:</strong> При включённом тумблере бот автоматически берёт фото вещи из канала-донора, отсекает чужие логотипы и диванный фон, и надевает вещь на виртуальную модель. В Telegram-канале публикуется стильный альбом, где <strong>первым слайдом идёт фото с моделью</strong>, а затем детальные фото ткани.
+        </div>
       </div>
 
       {/* 🎬 1. БЛОК: AI ВИДЕО-ГЕНЕРАЦИЯ (IMAGE-TO-VIDEO) */}
@@ -244,6 +290,7 @@ export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => 
               }}
             >
               <option value="builtin" style={{ background: '#111' }}>⚡ Встроенный Turbo HD (Входит в тариф, 0 ₽)</option>
+              <option value="fashion_multicolor" style={{ background: '#111' }}>👗 Fashion Мульти-цвет + AI Голос (Все цвета куртки + озвучка 9:16, 0 ₽)</option>
               <option value="seedance" style={{ background: '#111' }}>💃 Seedance AI API (ByteDance e-commerce video)</option>
               <option value="replicate" style={{ background: '#111' }}>🤖 Replicate API (Kling AI 1.6 / Wan2.1 / MiniMax)</option>
               <option value="luma" style={{ background: '#111' }}>🎥 Luma Dream Machine API (3D облёт товара)</option>

@@ -45,6 +45,7 @@ class User(Base):
     tg_api_id = Column(Integer, nullable=True)                        # api_id пользователя
     tg_api_hash_encrypted = Column(Text, nullable=True)               # api_hash
     tg_session_string = Column(Text, nullable=True)                   # StringSession
+    pin_code = Column(String(50), default="1234", nullable=True)     # PIN-код для быстрого входа с телефона
 
     # Статистика
     total_posts_processed = Column(Integer, default=0)
@@ -81,6 +82,10 @@ class Project(Base):
     image_model = Column(String(100), default="dall-e-3")
     image_prompt_style = Column(Text)
     image_api_key_encrypted = Column(LargeBinary)
+
+    # Виртуальная примерка (VTON) на фирменную модель
+    vton_enabled = Column(Boolean, default=False, nullable=False, server_default="0")
+
 
     # Редполитика
     duplicate_threshold = Column(Float, default=0.85)
@@ -297,6 +302,8 @@ class Order(Base):
     price_at_order = Column(String(100), nullable=True)             # Цена на момент заказа
     comment = Column(Text, nullable=True)
     supplier_message = Column(Text, nullable=True)                  # AI-сгенерированный текст для поставщика
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     article = relationship("ArticleItem", back_populates="orders")
 
 
@@ -320,6 +327,7 @@ class ParsedPostItem(Base):
     media_count = Column(Integer, default=0)
     status = Column(String(50), default="published")   # "published" | "skipped_duplicate" | "error"
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 
 

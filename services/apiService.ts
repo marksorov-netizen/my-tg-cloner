@@ -16,17 +16,34 @@ async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...(options.headers as Record<string, string> || {}),
+  };
+
   const res = await fetch(`${API_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    credentials: 'include',   // ← Отправляем httpOnly cookie с JWT токеном
     ...options,
+    headers,
+    credentials: 'include',   // ← Отправляем httpOnly cookie с JWT токеном
   });
 
   if (res.status === 204) return undefined as T; // No Content
 
-  // Если 401 — пользователь не авторизован, перенаправляем на страницу входа
+  // Если 401 — пользователь не авторизован.
+  // Редиректим на /login только для защищенных /api/* (не для /auth, /status, /health,
+  // чтобы не зациклить страницу входа).
   if (res.status === 401) {
     const data = await res.json().catch(() => ({ detail: 'Unauthorized' }));
+    const isAuthFlow = path.startsWith('/auth/') || path === '/status' || path === '/health';
+    if (!isAuthFlow && typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      try { 
+        localStorage.removeItem('ghostpost_auth'); 
+        localStorage.removeItem('auth_token');
+      } catch {}
+      window.location.href = '/login';
+    }
     throw new Error(data.detail || 'Сессия истекла. Войдите заново.');
   }
 
@@ -92,6 +109,20 @@ export const apiService = {
     try {
       await apiFetch('/auth/logout', { method: 'POST' });
     } catch { /* игнорируем ошибки разлогина */ }
+    try { localStorage.removeItem('ghostpost_auth'); } catch {}
+  },
+
+  /** Текущий пользователь (проверка JWT cookie). Бросает 401 если не авторизован. */
+  getMe: async (): Promise<{ status: string; id: string; phone?: string; is_admin?: boolean }> =>
+    apiFetch('/api/me'),
+
+  /** Проверка личного AI-ключа через backend (ключ не сохраняется в браузере). */
+  testAiKey: async (provider: string, api_key: string): Promise<{ status: string; ok: boolean; message: string }> => {
+    const res = await apiFetch<{ status: string; message: string }>('/api/ai/test-key', {
+      method: 'POST',
+      body: JSON.stringify({ provider, api_key }),
+    });
+    return { status: res.status, ok: res.status === 'ok', message: res.message };
   },
 
   // ---------- Batch операции ----------
@@ -116,7 +147,10 @@ export const apiService = {
     videoProvider: string = 'builtin',
     videoApiKey?: string,
     videoMotionStyle: string = 'trending_cinematic',
-    videoAutoPrompt: boolean = true
+    videoAutoPrompt: boolean = true,
+    vtonEnabled: boolean = false,
+    brandBadgeText?: string,
+    watermarkPosition?: string
   ) =>
     apiFetch('/batch/send', {
       method: 'POST',
@@ -135,12 +169,35 @@ export const apiService = {
         video_api_key: videoApiKey || undefined,
         video_motion_style: videoMotionStyle,
         video_auto_prompt: videoAutoPrompt,
+        vton_enabled: vtonEnabled,
+        brand_badge_text: brandBadgeText,
+        watermark_position: watermarkPosition || 'auto',
       }),
     }),
 
+  /** Умная очистка водяных знаков и брендирование фото */
+  cleanWatermarkPreview: async (
+    garmentPath = 'latest',
+    brandText?: string,
+    channel?: string,
+    mode: string = 'hybrid',
+    position: string = 'auto'
+  ): Promise<{ status: string; result_path: string; preview_url: string; garment_url?: string }> =>
+    apiFetch('/api/watermark/preview', {
+      method: 'POST',
+      body: JSON.stringify({ garment_path: garmentPath, brand_text: brandText, channel, mode, position }),
+    }),
+
+  /** Совместимость с прошлым методом примерки/очистки */
+  previewVton: async (garmentPath = 'latest', description?: string, channel?: string): Promise<{ status: string; result_path: string; preview_url: string; garment_url?: string }> =>
+    apiFetch('/api/watermark/preview', {
+      method: 'POST',
+      body: JSON.stringify({ garment_path: garmentPath, description, brand_text: description, channel }),
+    }),
+
   /** Тестовая генерация промта через Gemini Vision */
-  testVideoPrompt: async (title: string, motionStyle = 'trending_cinematic') =>
-    apiFetch('/api/video/test_prompt', {
+  testVideoPrompt: async (title: string, motionStyle = 'trending_cinematic'): Promise<{ generated_prompt?: string; status?: string }> =>
+    apiFetch<{ generated_prompt?: string; status?: string }>('/api/video/test_prompt', {
       method: 'POST',
       body: JSON.stringify({ title, motion_style: motionStyle }),
     }),
@@ -202,4 +259,74 @@ export const apiService = {
   /** Очистить весь архив запарсенных постов */
   clearParsedPosts: async (): Promise<{ status: string; message: string }> =>
     apiFetch('/api/parsed_posts', { method: 'DELETE' }),
+
+  // ---------- Быстрый вход с телефона & PIN ----------
+
+  /** Быстрый вход по телефону и PIN-коду (без повторного ввода Telegram API/SMS) */
+  quickLogin: async (phone: string, pin: string = '1234'): Promise<{
+    status: string;
+    token: string;
+    user: string;
+    phone: string;
+    user_id: string;
+    subscription_tier?: string;
+    is_admin?: boolean;
+    pin_code?: string;
+  }> => {
+    return apiFetch('/auth/quick_login', {
+      method: 'POST',
+      body: JSON.stringify({ phone, pin }),
+    });
+  },
+
+  /** Получить текущий PIN-код пользователя */
+  getUserPin: async (): Promise<{ pin_code: string }> => {
+    return apiFetch('/api/user/pin');
+  },
+
+  /** Обновить PIN-код пользователя */
+  updateUserPin: async (pin_code: string): Promise<{ status: string; pin_code: string }> => {
+    return apiFetch('/api/user/pin', {
+      method: 'POST',
+      body: JSON.stringify({ pin_code }),
+    });
+  },
+
+  // ---------- Кросс-девайс синхронизация задач (ПК ↔ Телефон) ----------
+
+  /** Получить текущее состояние активной задачи на сервере */
+  getTaskStatus: async (): Promise<{
+    is_running: boolean;
+    is_live_monitoring: boolean;
+    module: 'store' | 'parser';
+    donor: string;
+    targets: string[];
+    current: number;
+    total: number;
+    status_message: string;
+    countdown_sec: number;
+    logs: any[];
+    should_stop: boolean;
+    started_at?: string;
+    updated_at: string;
+  }> => {
+    return apiFetch('/api/tasks/status');
+  },
+
+  /** Синхронизировать прогресс выполнения с сервером */
+  syncTaskProgress: async (data: Record<string, any>): Promise<{ status: string }> => {
+    return apiFetch('/api/tasks/sync', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  /** Мгновенная остановка задачи с любого устройства */
+  stopTask: async (): Promise<{ status: string; state: any }> => {
+    return apiFetch('/api/tasks/stop', {
+      method: 'POST',
+    });
+  },
 };
+
+

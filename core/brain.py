@@ -14,6 +14,7 @@ Pipeline:
 
 import logging
 import os
+import shutil
 from typing import List, Optional
 from datetime import datetime
 
@@ -184,7 +185,7 @@ class ProjectBrain:
                     f"Post saved with status='pending_retry'. SKIPPING PUBLISH."
                 )
             else:
-                await self._publish(project.target_channel_id, processed_text, user_id=project.user_id, message=message)
+                await self._publish(project.target_channel_id, processed_text, user_id=project.user_id, message=message, project=project)
                 status = "published"
                 logger.info(f"[Pipeline] Published to {project.target_channel_id}")
 
@@ -208,11 +209,16 @@ class ProjectBrain:
     ) -> str:
         """Вызывает Gemini API для рерайта текста через ai_rewriter."""
         from core.ai_rewriter import call_gemini_with_retry
+        from core.donor_sanitizer import sanitize_donor_text
 
-        link_instruction = (
-            "УДАЛИ все внешние ссылки (http/https) и упоминания (@) из текста."
-            if remove_links
-            else "Сохрани ссылки как есть."
+        clean_input = sanitize_donor_text(text)
+
+        anti_donor_rules = (
+            "СТРОЖАЙШИЙ ЗАПРЕТ НА ДАННЫЕ И КОНТАКТЫ ДОНОРА:\n"
+            "1. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО оставлять любые номера телефонов (включая +7..., 8..., WhatsApp, городские и мобильные номера).\n"
+            "2. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО копировать любые ссылки (t.me, wa.me, vk.com, max.ru, instagram), чужие аккаунты (@...) и контакты менеджеров.\n"
+            "3. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать названия рынков, складов, торговых центров, корпусов, линий и павильонов (Садовод, ТК Садовод, Линия, Корпус, Б-2А-49, Павильон, ТЯК, Люблино, этаж, место, поставщик).\n"
+            "4. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО копировать призывы донора 'Для оформления заказа', 'Для заказа пишите' и реквизиты поставщика."
         )
 
         user_prompt = prompt or (
@@ -223,15 +229,16 @@ class ProjectBrain:
 
         full_prompt = (
             f"{user_prompt}\n\n"
-            f"Правила:\n1. {link_instruction}\n2. Сохрани все ключевые факты и суть оригинала.\n\n"
-            f"Исходный текст:\n\"{text}\""
+            f"Правила:\n{anti_donor_rules}\n\n"
+            f"Исходный текст:\n\"{clean_input}\""
         )
 
         rewritten, tokens = await call_gemini_with_retry(
-            text=text,
+            text=clean_input,
             prompt=full_prompt,
             system_prompt="Ты профессиональный SMM-редактор и копирайтер Telegram-каналов.",
         )
+        rewritten = sanitize_donor_text(rewritten)
         logger.info(f"[AI] Rewrite done: {len(text)} → {len(rewritten)} chars (tokens={tokens})")
         return rewritten
 
@@ -244,7 +251,8 @@ class ProjectBrain:
         target_channel: str,
         text: str,
         user_id: Optional[str] = None,
-        message: Optional[TelegramMessage] = None
+        message: Optional[TelegramMessage] = None,
+        project: Optional[Project] = None
     ):
         """Отправляет сообщение в целевой канал (или несколько целевых каналов через запятую).
         Поддерживает прикрепление медиа из исходного сообщения.
@@ -301,6 +309,36 @@ class ProjectBrain:
                         media_files.append(f)
                 except Exception as dl_err:
                     logger.warning(f"[Publish] Could not download media for msg {message.message_id}: {dl_err}")
+
+        # Сохраняем фото последнего запарсенного товара для примерки (только валидные изображения)
+        if media_files:
+            try:
+                for mf in media_files:
+                    if isinstance(mf, str) and mf.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                        shutil.copy(mf, os.path.join(temp_dir, "latest_parsed_garment.jpg"))
+                        break
+            except Exception:
+                pass
+
+        # 🛡️ Умная очистка водяных знаков и брендирование фото (если включено в проекте)
+        if project and getattr(project, "vton_enabled", False) and media_files:
+            try:
+                from core.watermark_cleaner import watermark_cleaner
+                badge_text = getattr(project, "brand_badge_text", None)
+                badge_text = badge_text.strip() if badge_text and badge_text.strip() else None
+                clean_mode = "hybrid" if badge_text else "inpaint"
+                logger.info(f"[Publish] Watermark cleaner enabled for project '{project.name}' (mode={clean_mode}). Cleaning media...")
+                media_files = await watermark_cleaner.process_post_media(
+                    media_files,
+                    brand_text=badge_text,
+                    mode=clean_mode
+                )
+            except Exception as wm_err:
+                logger.warning(f"[Publish] Watermark cleaning failed: {wm_err}, proceeding with original media")
+
+        # 🛡️ Абсолютная зачистка текста от контактов, телефонов и павильонов донора
+        from core.donor_sanitizer import sanitize_donor_text
+        text = sanitize_donor_text(text)
 
         try:
             for target in targets:
@@ -408,3 +446,4 @@ class ProjectBrain:
 
 # Singleton
 brain = ProjectBrain()
+

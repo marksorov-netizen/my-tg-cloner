@@ -80,14 +80,18 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         is_pg = "postgres" in str(engine.url)
         if is_pg:
-            for col, tbl in [
-                ("foot_size_cm", "orders"),
-                ("height_weight", "orders"),
-                ("supplier_message", "orders"),
-                ("product_type", "article_items"),
+            for col, tbl, col_type in [
+                ("foot_size_cm", "orders", "TEXT"),
+                ("height_weight", "orders", "TEXT"),
+                ("supplier_message", "orders", "TEXT"),
+                ("product_type", "article_items", "TEXT"),
+                ("vton_enabled", "projects", "BOOLEAN DEFAULT FALSE"),
+                ("created_at", "orders", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+                ("updated_at", "orders", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+                ("pin_code", "users", "TEXT DEFAULT '1234'"),
             ]:
                 try:
-                    await conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} TEXT;"))
+                    await conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} {col_type};"))
                 except Exception:
                     pass
         else:
@@ -96,6 +100,10 @@ async def init_db():
                 "ALTER TABLE orders ADD COLUMN height_weight TEXT;",
                 "ALTER TABLE orders ADD COLUMN supplier_message TEXT;",
                 "ALTER TABLE article_items ADD COLUMN product_type TEXT;",
+                "ALTER TABLE projects ADD COLUMN vton_enabled BOOLEAN DEFAULT 0;",
+                "ALTER TABLE orders ADD COLUMN created_at DATETIME;",
+                "ALTER TABLE orders ADD COLUMN updated_at DATETIME;",
+                "ALTER TABLE users ADD COLUMN pin_code TEXT DEFAULT '1234';",
             ]:
                 try:
                     await conn.execute(text(alter_sql))
@@ -216,3 +224,4 @@ async def get_db():
     """Dependency для FastAPI endpoints."""
     async with async_session() as session:
         yield session
+

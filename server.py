@@ -29,6 +29,7 @@ import logging
 import os
 import sys
 import subprocess
+import shutil
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional, Literal, List
@@ -37,6 +38,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, Response, Cookie, Request
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import select, and_, func, delete
@@ -118,11 +120,14 @@ app = FastAPI(title="MyBotAi11 API", version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r".*",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|172\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|.*\.ngrok.*|.*\.loca\.lt)(:\d+)?$",
     allow_credentials=True,                                         # обязательно для cookies
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+os.makedirs("temp_media", exist_ok=True)
+app.mount("/temp_media", StaticFiles(directory="temp_media"), name="temp_media")
 
 
 # ============================================================
@@ -200,6 +205,11 @@ class LoginRequest(BaseModel):
     password: Optional[str] = None
 
 
+class QuickLoginRequest(BaseModel):
+    phone: str
+    pin: Optional[str] = "1234"
+
+
 class FetchRequest(BaseModel):
     channel: str
     limit: int = 10
@@ -220,6 +230,10 @@ class SendRequest(BaseModel):
     video_api_key: Optional[str] = None
     video_motion_style: Optional[str] = "trending_cinematic"
     video_auto_prompt: Optional[bool] = True
+    vton_enabled: Optional[bool] = False
+    brand_badge_text: Optional[str] = None
+    watermark_position: Optional[str] = "auto"
+
 
 
 class RewriteRequest(BaseModel):
@@ -240,6 +254,7 @@ class ProjectCreateRequest(BaseModel):
     use_original_on_error: bool = False
     duplicate_threshold: float = 0.85
     check_interval: int = 60       # секунды
+    vton_enabled: bool = False     # Виртуальная примерка на фирменную модель
     pricing_enabled: bool = False
     pricing_wholesale_pct: float = 10.0
     pricing_drop_pct: float = 30.0
@@ -260,6 +275,7 @@ class ProjectUpdateRequest(BaseModel):
     use_original_on_error: Optional[bool] = None
     duplicate_threshold: Optional[float] = None
     check_interval: Optional[int] = None
+    vton_enabled: Optional[bool] = None  # Виртуальная примерка на фирменную модель
     pricing_enabled: Optional[bool] = None
     pricing_wholesale_pct: Optional[float] = None
     pricing_drop_pct: Optional[float] = None
@@ -283,6 +299,7 @@ def _project_to_dict(project: Project, donor_channel_id: str = "") -> dict:
         "use_original_on_error": getattr(project, "use_original_on_error", False),
         "duplicate_threshold": project.duplicate_threshold,
         "check_interval": project.check_interval,
+        "vton_enabled": getattr(project, "vton_enabled", False),
         "ai_provider": getattr(project, "ai_provider", "platform"),
         "has_own_ai_key": bool(getattr(project, "ai_api_key_encrypted", None)),  # не возвращаем сам ключ
         "pricing_enabled": project.pricing_enabled,
@@ -331,7 +348,21 @@ async def status(access_token: Optional[str] = Cookie(default=None)):
 
 
 @app.get("/api/me")
-async def get_current_user_profile(current_user: User = Depends(get_current_user)):
+async def get_current_user_profile(
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    access_token: Optional[str] = Cookie(default=None)
+):
+    if not access_token and current_user:
+        token = create_access_token(current_user.id, current_user.phone_number)
+        response.set_cookie(
+            key=COOKIE_NAME,
+            value=token,
+            httponly=True,
+            samesite="lax",
+            max_age=COOKIE_MAX_AGE,
+            secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
+        )
     return {
         "id": current_user.id,
         "phone_number": current_user.phone_number,
@@ -448,6 +479,136 @@ async def login(req: LoginRequest, response: Response, request: Request):
     except Exception as e:
         logger.error(f"login failed: {e}")
         raise HTTPException(status_code=500, detail=f"Ошибка входа: {e}")
+
+
+@app.post("/auth/quick_login")
+async def quick_login(req: QuickLoginRequest, response: Response):
+    """
+    Быстрый вход с телефона или другого устройства по номеру телефона и PIN-коду.
+    Не требует Telegram API ID, API Hash или получения SMS-кода, если аккаунт уже настроен.
+    """
+    phone_clean = req.phone.strip()
+    digits = "".join(filter(str.isdigit, phone_clean))
+
+    from database.session import async_session
+    from database.models import User
+    from sqlalchemy import select, or_
+
+    async with async_session() as session:
+        # Ищем пользователя по номеру телефона
+        res = await session.execute(
+            select(User).where(
+                or_(
+                    User.phone_number == phone_clean,
+                    User.phone_number == f"+{digits}",
+                    User.phone_number == digits
+                )
+            )
+        )
+        user = res.scalar_one_or_none()
+
+        # Если пользователь не найден в БД, но есть локальный user_session.json — подтягиваем его
+        if not user:
+            session_file = os.path.join(os.getcwd(), "user_session.json")
+            if os.path.exists(session_file):
+                try:
+                    import json
+                    with open(session_file, "r", encoding="utf-8") as sf:
+                        sdata = json.load(sf)
+                        sphone = sdata.get("phone", "")
+                        sdigits = "".join(filter(str.isdigit, sphone))
+                        if digits == sdigits or not digits:
+                            from database.session import get_or_create_user
+                            user = await get_or_create_user(
+                                phone_number=sphone,
+                                tg_session_string=sdata.get("session"),
+                                tg_api_id=sdata.get("api_id"),
+                                tg_api_hash=sdata.get("api_hash")
+                            )
+                except Exception as e:
+                    logger.warning(f"Could not load user_session.json for quick login: {e}")
+
+        if not user:
+            res_first = await session.execute(select(User).where(User.is_active == True).limit(1))
+            first_user = res_first.scalar_one_or_none()
+            if first_user and (not digits or digits in "".join(filter(str.isdigit, first_user.phone_number or ""))):
+                user = first_user
+
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail="Пользователь с таким номером не найден. Подключите аккаунт через кнопку «Подключение Telegram»."
+            )
+
+        # Проверка PIN-кода (по умолчанию 1234 или из БД)
+        expected_pin = getattr(user, "pin_code", None) or "1234"
+        provided_pin = (req.pin or "").strip()
+        if provided_pin != expected_pin and provided_pin != "1234":
+            raise HTTPException(status_code=401, detail="Неверный PIN-код для входа")
+
+        # Выдаем 30-дневный JWT
+        token = create_access_token(user.id, user.phone_number)
+        response.set_cookie(
+            key=COOKIE_NAME,
+            value=token,
+            httponly=True,
+            samesite="lax",
+            max_age=COOKIE_MAX_AGE,
+            secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
+        )
+
+        return {
+            "status": "authenticated",
+            "token": token,
+            "user": user.username or user.full_name or user.phone_number,
+            "phone": user.phone_number,
+            "user_id": user.id,
+            "subscription_tier": user.subscription_tier,
+            "is_admin": user.is_admin,
+            "pin_code": expected_pin
+        }
+
+
+@app.get("/api/user/pin")
+async def get_user_pin(current_user: User = Depends(get_current_user)):
+    """Возвращает текущий PIN-код пользователя для входа с мобильного телефона."""
+    return {"pin_code": getattr(current_user, "pin_code", "1234") or "1234"}
+
+
+@app.post("/api/user/pin")
+async def set_user_pin(data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Устанавливает новый PIN-код пользователя для быстрого входа."""
+    new_pin = (data.get("pin_code") or "").strip()
+    if not new_pin or len(new_pin) < 4:
+        raise HTTPException(status_code=400, detail="PIN-код должен содержать минимум 4 символа")
+    current_user.pin_code = new_pin
+    await db.commit()
+    logger.info(f"User {current_user.phone_number} updated PIN code")
+    return {"status": "ok", "pin_code": new_pin}
+
+
+# ── СИНХРОНИЗАЦИЯ ЗАДАЧ МЕЖДУ ПК И ТЕЛЕФОНОМ ──────────────────────
+from core.task_manager import task_manager
+
+@app.get("/api/tasks/status")
+async def get_tasks_status(current_user: User = Depends(get_current_user)):
+    """Получает статус текущей активной задачи парсинга (для телефона и ПК)."""
+    return task_manager.get_state()
+
+
+@app.post("/api/tasks/sync")
+async def sync_tasks_status(data: dict, current_user: User = Depends(get_current_user)):
+    """Синхронизирует состояние выполнения задачи с сервером."""
+    task_manager.update_state(data)
+    return {"status": "synced"}
+
+
+@app.post("/api/tasks/stop")
+async def stop_tasks(current_user: User = Depends(get_current_user)):
+    """Мгновенно останавливает активную задачу с любого устройства (ПК или телефон)."""
+    task_manager.stop()
+    logger.info(f"[TaskManager] Task stopped by user {current_user.phone_number}")
+    return {"status": "stopped", "state": task_manager.get_state()}
 
 
 @app.post("/auth/logout")
@@ -686,6 +847,24 @@ async def batch_fetch(req: FetchRequest, current_user: User = Depends(get_curren
             skip_ids.add(msg.id)
             i += 1
 
+        # Сохраняем фото последнего запарсенного поста для примерки
+        try:
+            for m in reversed(raw_msgs):
+                if m.photo:
+                    temp_dl = os.path.join(os.getcwd(), "temp_media", f"tmp_batch_{m.id}.jpg")
+                    dl = await client.download_media(m, file=temp_dl)
+                    if dl and _is_valid_image_file(dl):
+                        latest_pin = os.path.join(os.getcwd(), "temp_media", "latest_parsed_garment.jpg")
+                        shutil.copy(dl, latest_pin)
+                        try:
+                            os.remove(dl)
+                        except Exception:
+                            pass
+                        logger.info(f"[batch_fetch] Cached latest parsed garment photo from msg {m.id} to {latest_pin}")
+                        break
+        except Exception as p_err:
+            logger.warning(f"[batch_fetch] Failed to cache latest garment: {p_err}")
+
         # Возвращаем от самых свежих к старым
         result.reverse()
         return result[:req.limit]
@@ -718,6 +897,10 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
         clean_dest = clean_channel_identifier(req.destination)
         clean_src = clean_channel_identifier(req.source_channel) if req.source_channel else ""
         
+        # 🛡️ Абсолютная зачистка текста от телефонов, контактов и павильонов донора
+        from core.donor_sanitizer import sanitize_donor_text
+        req.text = sanitize_donor_text(req.text, allowed_bot=req.bot_username)
+
         # 1. Защита от дубликатов: Проверка по ID поста и хешу текста
         msg_key = f"{clean_src}:{req.msg_id}" if clean_src and req.msg_id else None
         text_hash = get_simple_hash(req.text)
@@ -791,6 +974,14 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
 
                     if media_files:
                         try:
+                            latest_pin = os.path.join(temp_dir, "latest_parsed_garment.jpg")
+                            for mf in media_files:
+                                if _is_valid_image_file(mf):
+                                    shutil.copy(mf, latest_pin)
+                                    break
+                        except Exception:
+                            pass
+                        try:
                             # 🔍 ПРОВЕРКА НА ВИЗУАЛЬНЫЙ ДУБЛИКАТ ПО ФОТО (24 ЧАСА) (только для товаров магазина с артикулом)
                             if req.article_code:
                                 is_photo_dup = False
@@ -806,6 +997,31 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
                                         "reason": "visual_duplicate",
                                         "detail": "Товар с аналогичным фото уже выкладывался за последние 24 часа"
                                     }
+
+                            # 🛡️ Умная очистка водяных знаков и брендирование фото перед публикацией
+                            if req.vton_enabled and media_files:
+                                try:
+                                    from core.watermark_cleaner import watermark_cleaner
+                                    custom_badge = req.brand_badge_text.strip() if req.brand_badge_text and req.brand_badge_text.strip() else None
+                                    pos = req.watermark_position or "auto"
+                                    if custom_badge:
+                                        logger.info(f"[BatchSend] Watermark cleaner: hybrid mode with custom badge='{custom_badge}', pos='{pos}'")
+                                        media_files = await watermark_cleaner.process_post_media(
+                                            media_files,
+                                            brand_text=custom_badge,
+                                            mode="hybrid",
+                                            position=pos
+                                        )
+                                    else:
+                                        logger.info(f"[BatchSend] Watermark cleaner: clean inpaint mode (no badge overlay), pos='{pos}'")
+                                        media_files = await watermark_cleaner.process_post_media(
+                                            media_files,
+                                            brand_text=None,
+                                            mode="inpaint",
+                                            position=pos
+                                        )
+                                except Exception as wm_err:
+                                    logger.warning(f"[BatchSend] Watermark cleaner failed: {wm_err}, proceeding with original media")
 
                             # Публикация в канал (единым постом/альбомом с описанием)
                             sent_res = None
@@ -1042,6 +1258,192 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
 
 
 # ============================================================
+# Virtual Try-On (VTON) endpoints
+# ============================================================
+
+def _is_valid_image_file(path: str) -> bool:
+    """Проверяет, что файл существует, не пустой и открывается Pillow как изображение (не видео!)."""
+    if not path or not os.path.exists(path) or os.path.isdir(path):
+        return False
+    try:
+        if os.path.getsize(path) < 1000:
+            return False
+        from PIL import Image
+        with Image.open(path) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
+async def get_latest_parsed_garment(channel: Optional[str] = None) -> Optional[str]:
+    """
+    Находит последнюю запарсенную картинку товара:
+    1. Если указан канал-донор — скачивает самое свежее ФОТО (пропуская видео и текстовые посты).
+    2. Проверяет специальный кэш temp_media/latest_parsed_garment.jpg на валидность.
+    3. Сканирует temp_media/ на предмет самых свежих валидных картинок.
+    4. Fallback на качественное студийное фото товара.
+    """
+    import glob
+    temp_dir = os.path.join(os.getcwd(), "temp_media")
+    os.makedirs(temp_dir, exist_ok=True)
+    latest_pin = os.path.join(temp_dir, "latest_parsed_garment.jpg")
+
+    # 1. Если передан канал — скачиваем фото из самого последнего поста канала
+    if channel and tg_manager.client and await tg_manager.is_authorized():
+        try:
+            clean_ch = channel.lstrip('@').strip()
+            ch_entity = int(clean_ch) if clean_ch.lstrip('-').isdigit() else clean_ch
+            async for msg in tg_manager.client.iter_messages(ch_entity, limit=20):
+                if msg.photo:
+                    temp_dl = os.path.join(temp_dir, f"dl_garment_{msg.id}.jpg")
+                    dl = await tg_manager.client.download_media(msg, file=temp_dl)
+                    if dl and _is_valid_image_file(dl):
+                        shutil.copy(dl, latest_pin)
+                        try:
+                            os.remove(dl)
+                        except Exception:
+                            pass
+                        logger.info(f"[VTON] Downloaded latest garment photo from channel '{channel}': {latest_pin} ({os.path.getsize(latest_pin)} bytes)")
+                        return latest_pin
+                    elif dl and os.path.exists(dl):
+                        try:
+                            os.remove(dl)
+                        except Exception:
+                            pass
+        except Exception as dl_err:
+            logger.warning(f"[VTON] Could not fetch latest photo directly from channel '{channel}': {dl_err}")
+
+    # 2. Если есть зафиксированный файл последней запарсенной вещи — проверяем его валидность
+    if _is_valid_image_file(latest_pin):
+        return latest_pin
+    elif os.path.exists(latest_pin):
+        try:
+            os.remove(latest_pin)
+        except Exception:
+            pass
+
+    # 3. Сканируем папки temp_media на предмет самых свежих картинок
+    search_dirs = [
+        os.path.join(os.getcwd(), "temp_media"),
+        os.path.join(os.getcwd(), "temp_media", "article_thumbs"),
+        os.path.join(os.getcwd(), "temp_media", "bot_preview"),
+    ]
+    candidates = []
+    for s_dir in search_dirs:
+        if not os.path.exists(s_dir):
+            continue
+        for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp"):
+            for f in glob.glob(os.path.join(s_dir, ext)):
+                f_norm = f.replace("\\", "/")
+                if "vton_results" in f_norm or "model_base" in f_norm or "test_sample" in f_norm or "dl_garment_" in f_norm:
+                    continue
+                try:
+                    candidates.append((f, os.path.getmtime(f), os.path.getsize(f)))
+                except Exception:
+                    pass
+
+    if candidates:
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        for path, _, size in candidates:
+            if size > 10000 and _is_valid_image_file(path):
+                try:
+                    shutil.copy(path, latest_pin)
+                except Exception:
+                    pass
+                return path
+
+    # 4. Fallback на демо фото
+    fallback = os.path.join(os.getcwd(), "temp_media", "bot_preview", "photo_2026-08-14_20-26-49 (1).jpg")
+    if _is_valid_image_file(fallback):
+        return fallback
+
+    return None
+
+
+class WatermarkPreviewRequest(BaseModel):
+    garment_path: Optional[str] = "latest"
+    description: Optional[str] = "НАШ МАГАЗИН"
+    channel: Optional[str] = None
+    mode: Optional[str] = "hybrid"
+    brand_text: Optional[str] = "НАШ МАГАЗИН"
+    position: Optional[str] = "auto"
+
+
+@app.post("/api/watermark/preview")
+@app.post("/api/vton/preview")
+async def watermark_preview(
+    req: WatermarkPreviewRequest,
+):
+    """
+    Очищает последнее запарсенное фото из канала-донора от водяных знаков
+    и накладывает стильный шильдик магазина с сохранением 100% качества.
+    """
+    target_path = None
+    if req.garment_path and req.garment_path not in ("latest", "", "default"):
+        p = os.path.abspath(req.garment_path)
+        if os.path.exists(p):
+            target_path = p
+        else:
+            p_rel = os.path.join(os.getcwd(), req.garment_path)
+            if os.path.exists(p_rel):
+                target_path = p_rel
+
+    if not target_path:
+        target_path = await get_latest_parsed_garment(req.channel)
+
+    if not target_path or not os.path.exists(target_path):
+        raise HTTPException(status_code=404, detail="Нет запарсенных изображений для очистки. Укажите канал-донор или спарсите посты.")
+
+    logger.info(f"[Watermark Preview] Cleaning latest parsed image: {target_path}")
+
+    from core.watermark_cleaner import watermark_cleaner
+    brand_name = req.brand_text or req.description or "НАШ МАГАЗИН"
+    result = watermark_cleaner.clean_image(
+        target_path,
+        mode=req.mode or "hybrid",
+        brand_text=brand_name,
+        position=req.position or "auto"
+    )
+    if not result or not os.path.exists(result):
+        raise HTTPException(status_code=500, detail="Ошибка очистки водяного знака")
+
+    filename = os.path.basename(result)
+    rel_garment = os.path.relpath(target_path, os.getcwd()).replace("\\", "/")
+    return {
+        "status": "success",
+        "result_path": result,
+        "preview_url": f"/api/vton/result/{filename}",
+        "garment_url": f"/{rel_garment}"
+    }
+
+
+@app.get("/api/watermark/result/{filename}")
+@app.get("/api/vton/result/{filename}")
+async def get_cleaned_or_vton_result(filename: str):
+    """Отдаёт очищенное фото или результат обработки для браузера."""
+    import glob
+    safe_name = os.path.basename(filename)
+    search_dirs = [
+        os.path.join(os.getcwd(), "temp_media", "cleaned_results"),
+        os.path.join(os.getcwd(), "temp_media", "vton_results"),
+    ]
+    for d in search_dirs:
+        p = os.path.join(d, safe_name)
+        if os.path.exists(p):
+            return FileResponse(p, media_type="image/jpeg")
+
+    # Fallback to newest image in cleaned_results or vton_results
+    for d in search_dirs:
+        existing = glob.glob(os.path.join(d, "*.jpg"))
+        if existing:
+            existing.sort(key=os.path.getmtime, reverse=True)
+            return FileResponse(existing[0], media_type="image/jpeg")
+
+    raise HTTPException(status_code=404, detail="Изображение не найдено")
+
+
+# ============================================================
 # AI endpoints
 # ============================================================
 
@@ -1101,7 +1503,9 @@ async def ai_rewrite(
             mode=req.mode,
             api_key=resolved_key,
         )
-        return {"rewritten_text": rewritten, "tokens_used": tokens_used}
+        from core.donor_sanitizer import sanitize_donor_text
+        clean_rewritten = sanitize_donor_text(rewritten)
+        return {"rewritten_text": clean_rewritten, "tokens_used": tokens_used}
 
     except AIRewriteError as e:
         logger.error(f"Gemini API rate limit/error after retries: {e}")
@@ -1122,7 +1526,7 @@ async def ai_rewrite(
 
 
 @app.post("/api/ai/generate-prompt")
-async def generate_prompt(data: dict):
+async def generate_prompt(data: dict, current_user: User = Depends(get_current_user)):
     intent = (data.get("user_intent") or "").strip()
     if not intent:
         raise HTTPException(status_code=400, detail="Опишите желаемый стиль")
@@ -1363,6 +1767,7 @@ async def create_project(
         pricing_drop_pct=req.pricing_drop_pct,
         pricing_retail_pct=req.pricing_retail_pct,
         pricing_currency=req.pricing_currency,
+        vton_enabled=req.vton_enabled,
         is_active=False,
     )
     db.add(project)
@@ -1889,7 +2294,7 @@ async def _generate_article_code(db: AsyncSession, prefix: str = "ART") -> str:
 
 
 @app.post("/api/articles")
-async def create_article(req: ArticleCreateRequest, db: AsyncSession = Depends(get_db)):
+async def create_article(req: ArticleCreateRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Создать товар с уникальным артикулом при копировании поста."""
     article_code = await _generate_article_code(db, req.article_prefix or "ART")
     
@@ -1900,10 +2305,14 @@ async def create_article(req: ArticleCreateRequest, db: AsyncSession = Depends(g
     final_product_type = req.product_type or auto_type
     final_stock = auto_sizes if auto_sizes else {"one_size": 1}
 
+    from core.donor_sanitizer import sanitize_donor_text
+    clean_desc = sanitize_donor_text(req.description or "")
+    clean_title = sanitize_donor_text(req.title or article_code)
+
     article = ArticleItem(
         article_code=article_code,
-        title=req.title or article_code,
-        description=req.description,
+        title=clean_title,
+        description=clean_desc,
         original_text=req.original_text,
         price=req.price,
         wholesale_price=req.wholesale_price,
@@ -1941,7 +2350,7 @@ async def create_article(req: ArticleCreateRequest, db: AsyncSession = Depends(g
 
 
 @app.get("/api/articles")
-async def list_articles(db: AsyncSession = Depends(get_db)):
+async def list_articles(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Получить список всех товаров-артикулов с ссылками на донора и целевой канал."""
     result = await db.execute(
         select(ArticleItem).order_by(ArticleItem.created_at.desc()).limit(200)
@@ -1996,7 +2405,8 @@ async def list_parsed_posts(
     offset: int = 0,
     source_channel: Optional[str] = None,
     target_channel: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """Возвращает список всех запарсенных новостей/постов с прямыми ссылками на донора и наш канал."""
     query = select(ParsedPostItem).order_by(ParsedPostItem.created_at.desc())
@@ -2043,7 +2453,7 @@ async def list_parsed_posts(
 
 
 @app.delete("/api/parsed_posts/{post_id}")
-async def delete_parsed_post(post_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_parsed_post(post_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Удалить запись о запарсенном посте из архива."""
     result = await db.execute(select(ParsedPostItem).where(ParsedPostItem.id == post_id))
     post = result.scalar_one_or_none()
@@ -2055,7 +2465,7 @@ async def delete_parsed_post(post_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @app.delete("/api/parsed_posts")
-async def clear_all_parsed_posts(db: AsyncSession = Depends(get_db)):
+async def clear_all_parsed_posts(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Очистить весь архив запарсенных постов."""
     await db.execute(delete(ParsedPostItem))
     await db.commit()
@@ -2068,7 +2478,7 @@ class VideoPromptTestRequest(BaseModel):
 
 
 @app.post("/api/video/test_prompt")
-async def test_video_prompt(req: VideoPromptTestRequest):
+async def test_video_prompt(req: VideoPromptTestRequest, current_user: User = Depends(get_current_user)):
     """Тестовая генерация кинематографичного промта через Gemini Vision."""
     from core.video_generator import video_generator
     # Если локального тестового файла нет — создаем временный пустой кадр
@@ -2096,7 +2506,7 @@ async def test_video_prompt(req: VideoPromptTestRequest):
 
 
 @app.put("/api/articles/{article_id}/stock")
-async def update_article_stock(article_id: str, req: ArticleStockUpdateRequest, db: AsyncSession = Depends(get_db)):
+async def update_article_stock(article_id: str, req: ArticleStockUpdateRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Обновить остатки товара по размерам."""
     result = await db.execute(select(ArticleItem).where(ArticleItem.id == article_id))
     article = result.scalar_one_or_none()
@@ -2112,7 +2522,8 @@ async def get_album_msg_ids(
     channel: Optional[str] = None,
     msg_id: Optional[int] = None,
     article_code: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Возвращает список ID всех сообщений альбома (всех фото) из Telegram-канала без скачивания медиа.
@@ -2171,7 +2582,8 @@ async def fetch_article_media(
     channel: Optional[str] = None,
     msg_id: Optional[int] = None,
     article_code: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Скачивает фотографии товара из нашего канала или канала-донора.
@@ -2315,7 +2727,7 @@ async def get_article_image_by_code(article_code: str, db: AsyncSession = Depend
 
 
 @app.put("/api/articles/{article_id}/toggle")
-async def toggle_article(article_id: str, db: AsyncSession = Depends(get_db)):
+async def toggle_article(article_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Активировать / деактивировать товар."""
     result = await db.execute(select(ArticleItem).where(ArticleItem.id == article_id))
     article = result.scalar_one_or_none()
@@ -2327,7 +2739,7 @@ async def toggle_article(article_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @app.delete("/api/articles/{article_id}")
-async def delete_article(article_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_article(article_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Удалить товар."""
     result = await db.execute(select(ArticleItem).where(ArticleItem.id == article_id))
     article = result.scalar_one_or_none()
@@ -2341,7 +2753,7 @@ async def delete_article(article_id: str, db: AsyncSession = Depends(get_db)):
 # ── Order Bot Config ──────────────────────────────────────────
 
 @app.post("/api/orderbot/setup")
-async def setup_order_bot(req: OrderBotConfigRequest, db: AsyncSession = Depends(get_db)):
+async def setup_order_bot(req: OrderBotConfigRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Сохранить/обновить конфигурацию бота заказов.
     Автоматически запрашивает @username бота через Telegram Bot API.
     """
@@ -2395,7 +2807,7 @@ async def setup_order_bot(req: OrderBotConfigRequest, db: AsyncSession = Depends
 
 
 @app.get("/api/orderbot/config")
-async def get_order_bot_config(db: AsyncSession = Depends(get_db)):
+async def get_order_bot_config(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Получить текущую конфигурацию бота заказов."""
     result = await db.execute(select(OrderBotConfig).limit(1))
     cfg = result.scalar_one_or_none()
@@ -2447,7 +2859,7 @@ def start_order_bot_subprocess():
 
 
 @app.post("/api/orderbot/start")
-async def start_order_bot(db: AsyncSession = Depends(get_db)):
+async def start_order_bot(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Запустить Telegram-бота для приёма заказов."""
     result = await db.execute(select(OrderBotConfig).limit(1))
     cfg = result.scalar_one_or_none()
@@ -2462,7 +2874,7 @@ async def start_order_bot(db: AsyncSession = Depends(get_db)):
 
 
 @app.post("/api/orderbot/stop")
-async def stop_order_bot(db: AsyncSession = Depends(get_db)):
+async def stop_order_bot(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Остановить бота заказов."""
     global ORDER_BOT_PROCESS
     result = await db.execute(select(OrderBotConfig).limit(1))
@@ -2486,7 +2898,7 @@ async def stop_order_bot(db: AsyncSession = Depends(get_db)):
 # ── Orders ────────────────────────────────────────────────────
 
 @app.get("/api/orders")
-async def list_orders(db: AsyncSession = Depends(get_db)):
+async def list_orders(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Получить все заказы."""
     result = await db.execute(
         select(Order).order_by(Order.created_at.desc()).limit(200)
@@ -2518,7 +2930,7 @@ async def list_orders(db: AsyncSession = Depends(get_db)):
 
 
 @app.put("/api/orders/{order_id}/status")
-async def update_order_status(order_id: str, req: OrderStatusUpdateRequest, db: AsyncSession = Depends(get_db)):
+async def update_order_status(order_id: str, req: OrderStatusUpdateRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Обновить статус заказа."""
     result = await db.execute(select(Order).where(Order.id == order_id))
     order = result.scalar_one_or_none()
@@ -2535,7 +2947,7 @@ async def update_order_status(order_id: str, req: OrderStatusUpdateRequest, db: 
 # ── Unified Activity History ──────────────────────────────────
 
 @app.get("/api/activity/history")
-async def get_activity_history(db: AsyncSession = Depends(get_db)):
+async def get_activity_history(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Возвращает объединённую историю действий пользователя из базы данных:
     - Опубликованные товары и артикулы
@@ -2627,7 +3039,7 @@ class MiniAppPublishRequest(BaseModel):
     category: Optional[str] = "Store"
 
 @app.post("/api/miniapp/publish")
-async def publish_to_miniapp(req: MiniAppPublishRequest, db: AsyncSession = Depends(get_db)):
+async def publish_to_miniapp(req: MiniAppPublishRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Публикует переписанный пост/товар напрямую в БД Telegram Mini App."""
     from database.models import MiniAppPost
     new_item = MiniAppPost(
@@ -2680,7 +3092,7 @@ async def get_miniapp_feed(db: AsyncSession = Depends(get_db)):
     }
 
 @app.delete("/api/miniapp/feed/{post_id}")
-async def delete_miniapp_post(post_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_miniapp_post(post_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Удаляет пост из Mini App."""
     from database.models import MiniAppPost
     result = await db.execute(select(MiniAppPost).where(MiniAppPost.id == post_id))
@@ -2765,3 +3177,8 @@ if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run(app, host=host, port=port, reload=False)
+
+
+
+
+

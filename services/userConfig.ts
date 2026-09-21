@@ -23,15 +23,30 @@ export interface UserSavedConfig {
   copyCount: number;
   intervalMinutes: number;
 
+  enableVton: boolean;
   enableVideoGen: boolean;
   videoAspectRatio: '9:16' | '1:1';
-  videoProvider: 'builtin' | 'seedance' | 'replicate' | 'luma' | 'runway';
+  videoProvider: 'builtin' | 'fashion_multicolor' | 'seedance' | 'replicate' | 'luma' | 'runway';
+  // NOTE: videoApiKey специально НЕ хранится в localStorage ( persistent XSS = кража ключа ).
+  // Только sessionStorage (чистится при закрытии вкладки) + память. См. get/setVideoApiKey ниже.
   videoApiKey: string;
   videoMotionStyle: 'trending_cinematic' | 'studio_rotation' | 'lifestyle_motion' | 'fast_reels';
   videoAutoPrompt: boolean;
 }
 
 const STORAGE_KEY = 'ghostpost_user_saved_channels';
+const VIDEO_KEY_SESSION = 'ghostpost_video_api_key_session';
+
+// API-ключ видео — только sessionStorage, никогда localStorage.
+export const getVideoApiKey = (): string => {
+  try { return sessionStorage.getItem(VIDEO_KEY_SESSION) || ''; } catch { return ''; }
+};
+export const setVideoApiKey = (key: string): void => {
+  try {
+    if (!key) sessionStorage.removeItem(VIDEO_KEY_SESSION);
+    else sessionStorage.setItem(VIDEO_KEY_SESSION, key);
+  } catch {}
+};
 
 export const loadUserSavedConfig = (): UserSavedConfig => {
   try {
@@ -56,10 +71,11 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
         copyCount: parsed.copyCount || 100,
         intervalMinutes: parsed.intervalMinutes !== undefined ? parsed.intervalMinutes : 15,
 
+        enableVton: parsed.enableVton !== undefined ? parsed.enableVton : false,
         enableVideoGen: parsed.enableVideoGen !== undefined ? parsed.enableVideoGen : false,
         videoAspectRatio: parsed.videoAspectRatio || '9:16',
         videoProvider: parsed.videoProvider || 'builtin',
-        videoApiKey: parsed.videoApiKey || '',
+        videoApiKey: getVideoApiKey(),
         videoMotionStyle: parsed.videoMotionStyle || 'trending_cinematic',
         videoAutoPrompt: parsed.videoAutoPrompt !== undefined ? parsed.videoAutoPrompt : true,
       };
@@ -81,19 +97,25 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
     copyCount: 100,
     intervalMinutes: 15,
 
+    enableVton: false,
     enableVideoGen: false,
     videoAspectRatio: '9:16',
     videoProvider: 'builtin',
-    videoApiKey: '',
+    videoApiKey: getVideoApiKey(),
     videoMotionStyle: 'trending_cinematic',
     videoAutoPrompt: true,
   };
 };
 
 export const saveUserSavedConfig = (partial: Partial<UserSavedConfig>): void => {
+  // videoApiKey никогда не пишем в localStorage — только в sessionStorage.
+  const { videoApiKey, ...rest } = partial as any;
+  if (videoApiKey !== undefined) setVideoApiKey(videoApiKey || '');
   const current = loadUserSavedConfig();
-  const updated = { ...current, ...partial };
+  const { videoApiKey: _drop, ...currentSafe } = current as any;
+  const updated = { ...currentSafe, ...rest };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   } catch {}
 };
+

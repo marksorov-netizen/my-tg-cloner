@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppConfig } from '../types';
-import { X, Eye, EyeOff, Copy, Check, Clock, Calendar, ShieldCheck, Zap, Sparkles } from 'lucide-react';
+import { X, Eye, EyeOff, Copy, Check, Clock, Calendar, ShieldCheck, Zap, Sparkles, Smartphone, KeyRound, Wifi, CheckCircle2, Save } from 'lucide-react';
 import { getActionHistory } from '../services/actionHistory';
+import { apiService } from '../services/apiService';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -13,6 +14,21 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, con
   const [showApiId, setShowApiId] = useState(false);
   const [showApiHash, setShowApiHash] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // PIN code management for Mobile Quick Login
+  const [pinCode, setPinCode] = useState('1234');
+  const [isSavingPin, setIsSavingPin] = useState(false);
+  const [pinSavedMsg, setPinSavedMsg] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      apiService.getUserPin()
+        .then(res => {
+          if (res?.pin_code) setPinCode(res.pin_code);
+        })
+        .catch(() => {});
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -34,9 +50,29 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, con
     setTimeout(() => setCopiedField(null), 2000);
   };
 
+  const handleSavePin = async () => {
+    setIsSavingPin(true);
+    try {
+      await apiService.updateUserPin(pinCode);
+      setPinSavedMsg(true);
+      setTimeout(() => setPinSavedMsg(false), 2500);
+    } catch (e: any) {
+      alert(e.message || 'Ошибка сохранения PIN-кода');
+    } finally {
+      setIsSavingPin(false);
+    }
+  };
+
   const apiIdVal = config.telegramAuth.apiId || '28472910';
   const apiHashVal = config.telegramAuth.apiHash || 'e89a7f3c1b4d092e6f51c82a39';
-  const phoneVal = config.telegramAuth.phoneNumber || '+7 (999) ***-**-**';
+  const phoneVal = config.telegramAuth.phoneNumber || localStorage.getItem('gp_phone') || '+7 (999) ***-**-**';
+
+  // Local Wi-Fi network link for mobile phones
+  const mobileLink = typeof window !== 'undefined'
+    ? (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? 'http://192.168.1.140:5173'
+        : `${window.location.protocol}//${window.location.hostname}:5173`)
+    : 'http://192.168.1.140:5173';
 
   return (
     <div style={{
@@ -122,6 +158,93 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, con
             >
               🚀 Продлить подписку
             </button>
+          </div>
+
+          {/* MOBILE QUICK LOGIN & CROSS-DEVICE PIN */}
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(230,57,70,0.08), rgba(255,255,255,0.02))',
+            border: '1px solid rgba(230,57,70,0.25)',
+            borderRadius: 18, padding: 18
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <h4 style={{ color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                <Smartphone size={18} style={{ color: '#e63946' }} /> Быстрый вход с телефона & PIN
+              </h4>
+              <span style={{ fontSize: 11, background: 'rgba(230,57,70,0.15)', color: '#ff6b6b', padding: '2px 8px', borderRadius: 6, fontWeight: 700 }}>
+                Синхронизация
+              </span>
+            </div>
+
+            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, margin: '0 0 14px 0' }}>
+              Запустите парсинг с ПК, отойдите от компьютера и управляйте процессом с телефона через локальный Wi-Fi по номеру телефона и PIN-коду.
+            </p>
+
+            {/* Local Wi-Fi Address */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', display: 'block', marginBottom: 4 }}>
+                🌐 Ссылка для открытия на телефоне (в сети Wi-Fi):
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={mobileLink}
+                  style={{
+                    flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 10, padding: '8px 12px', color: '#10b981', fontSize: 13, outline: 'none',
+                    fontWeight: 600
+                  }}
+                />
+                <button
+                  onClick={() => handleCopy(mobileLink, 'mobileLink')}
+                  style={{
+                    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: 10, padding: '0 12px', color: copiedField === 'mobileLink' ? '#10b981' : '#fff',
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12
+                  }}
+                >
+                  {copiedField === 'mobileLink' ? <Check size={14} /> : <Copy size={14} />}
+                  {copiedField === 'mobileLink' ? 'Скопировано' : 'Копия'}
+                </button>
+              </div>
+            </div>
+
+            {/* PIN Code Setup */}
+            <div>
+              <label style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', display: 'block', marginBottom: 4 }}>
+                🔑 Ваш секретный PIN-код (для входа без SMS):
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  value={pinCode}
+                  maxLength={10}
+                  onChange={(e) => setPinCode(e.target.value)}
+                  style={{
+                    flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 10, padding: '8px 12px', color: '#fff', fontSize: 14, outline: 'none',
+                    fontWeight: 700, letterSpacing: 2
+                  }}
+                />
+                <button
+                  onClick={handleSavePin}
+                  disabled={isSavingPin}
+                  style={{
+                    background: 'linear-gradient(135deg, #e63946, #c0392b)', border: 'none',
+                    borderRadius: 10, padding: '0 16px', color: '#fff', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700
+                  }}
+                >
+                  {pinSavedMsg ? <CheckCircle2 size={14} /> : <Save size={14} />}
+                  {pinSavedMsg ? 'Сохранено!' : 'Сохранить PIN'}
+                </button>
+              </div>
+              {pinSavedMsg && (
+                <div style={{ fontSize: 11, color: '#10b981', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <CheckCircle2 size={12} /> PIN-код успешно обновлен в базе данных!
+                </div>
+              )}
+            </div>
           </div>
 
           {/* TIME SAVED METRIC */}

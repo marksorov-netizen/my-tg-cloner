@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { ShieldCheck, ArrowRight, Loader2, AlertCircle, ArrowLeft, HelpCircle } from 'lucide-react';
+import { ShieldCheck, ArrowRight, Loader2, AlertCircle, ArrowLeft, HelpCircle, Smartphone, KeyRound, Lock, CheckCircle2 } from 'lucide-react';
+import { apiService } from '../services/apiService';
 
 interface LoginPageProps {
   onLoginSuccess?: () => void;
@@ -9,6 +10,15 @@ interface LoginPageProps {
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const navigate = useNavigate();
 
+  const [authMode, setAuthMode] = useState<'QUICK' | 'TELEGRAM'>('QUICK');
+
+  // Quick Login State (Phone + PIN)
+  const [quickPhone, setQuickPhone] = useState(
+    localStorage.getItem('gp_phone') || '+79998558576'
+  );
+  const [quickPin, setQuickPin] = useState('1234');
+
+  // Full Telegram Login State (API ID + Hash + SMS)
   const [step, setStep] = useState<'CREDENTIALS' | 'CODE'>('CREDENTIALS');
   const [apiId, setApiId] = useState('');
   const [apiHash, setApiHash] = useState('');
@@ -19,6 +29,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
 
   // Helper fetch with credentials
@@ -34,7 +45,42 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     return data;
   };
 
-  // Step 1: Request Telegram code
+  // 1. Быстрый вход (Телефон + PIN)
+  const handleQuickLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!quickPhone.trim()) {
+      setError('Введите номер телефона');
+      return;
+    }
+    if (!quickPin.trim()) {
+      setError('Введите PIN-код');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await apiService.quickLogin(quickPhone.trim(), quickPin.trim());
+      if (res.token) {
+        localStorage.setItem('auth_token', res.token);
+      }
+      localStorage.setItem('ghostpost_auth', 'true');
+      localStorage.setItem('gp_phone', res.phone || quickPhone.trim());
+
+      setSuccessMsg(`Добро пожаловать, ${res.user || 'Пользователь'}!`);
+      setTimeout(() => {
+        if (onLoginSuccess) onLoginSuccess();
+        navigate('/dashboard/store');
+      }, 500);
+    } catch (err: any) {
+      setError(err.message || 'Неверный номер или PIN-код');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 2. Шаг 1 полного входа: Запрос кода Telegram
   const handleRequestCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -63,7 +109,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  // Step 2: Sign in with code
+  // 3. Шаг 2 полного входа: Проверка кода Telegram
   const handleVerifyCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -83,8 +129,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       });
 
       if (res.status === 'authenticated') {
+        if (res.token) {
+          localStorage.setItem('auth_token', res.token);
+        }
+        localStorage.setItem('ghostpost_auth', 'true');
+        localStorage.setItem('gp_phone', phone.trim());
         if (onLoginSuccess) onLoginSuccess();
-        navigate('/dashboard');
+        navigate('/dashboard/store');
       } else {
         throw new Error('Не удалось войти');
       }
@@ -138,7 +189,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         </Link>
 
         {/* Header / Logo */}
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 10,
             fontFamily: "'Space Grotesk', sans-serif", fontSize: 28, fontWeight: 800,
@@ -152,7 +203,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             Ghost<span style={{ color: '#e63946' }}>Post</span>
           </div>
           <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 14 }}>
-            {step === 'CREDENTIALS' ? 'Вход через Telegram API' : `Ввод кода подтверждения для ${phone}`}
+            {authMode === 'QUICK'
+              ? '📱 Быстрый вход с телефона или ПК по PIN-коду'
+              : (step === 'CREDENTIALS' ? '🔑 Полная привязка через Telegram API' : `Ввод кода подтверждения для ${phone}`)}
           </p>
         </div>
 
@@ -160,15 +213,55 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         <div style={{
           background: 'rgba(255,255,255,0.03)',
           border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 24, padding: 32,
+          borderRadius: 24, padding: 30,
           boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
           backdropFilter: 'blur(20px)'
         }}>
+          {/* MODE SELECTOR TABS */}
+          <div style={{
+            display: 'flex',
+            background: 'rgba(0,0,0,0.4)',
+            padding: 4,
+            borderRadius: 14,
+            marginBottom: 24,
+            gap: 4,
+            border: '1px solid rgba(255,255,255,0.06)'
+          }}>
+            <button
+              type="button"
+              onClick={() => { setAuthMode('QUICK'); setError(null); }}
+              style={{
+                flex: 1, padding: '10px 12px', borderRadius: 10, border: 'none',
+                background: authMode === 'QUICK' ? 'linear-gradient(135deg, #e63946, #c0392b)' : 'transparent',
+                color: authMode === 'QUICK' ? '#fff' : 'rgba(255,255,255,0.55)',
+                fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                boxShadow: authMode === 'QUICK' ? '0 2px 10px rgba(230,57,70,0.3)' : 'none',
+                transition: 'all 0.2s'
+              }}
+            >
+              <Smartphone size={16} /> Вход по PIN (Телефон)
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAuthMode('TELEGRAM'); setError(null); }}
+              style={{
+                flex: 1, padding: '10px 12px', borderRadius: 10, border: 'none',
+                background: authMode === 'TELEGRAM' ? 'linear-gradient(135deg, #e63946, #c0392b)' : 'transparent',
+                color: authMode === 'TELEGRAM' ? '#fff' : 'rgba(255,255,255,0.55)',
+                fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                boxShadow: authMode === 'TELEGRAM' ? '0 2px 10px rgba(230,57,70,0.3)' : 'none',
+                transition: 'all 0.2s'
+              }}
+            >
+              <KeyRound size={16} /> Telegram API
+            </button>
+          </div>
+
           {error && (
             <div style={{
               background: 'rgba(230,57,70,0.1)',
               border: '1px solid rgba(230,57,70,0.3)',
-              borderRadius: 12, padding: '12px 16px', marginBottom: 24,
+              borderRadius: 12, padding: '12px 16px', marginBottom: 20,
               display: 'flex', alignItems: 'center', gap: 10,
               color: '#e63946', fontSize: 13
             }}>
@@ -177,13 +270,103 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </div>
           )}
 
-          {step === 'CREDENTIALS' ? (
-            <form onSubmit={handleRequestCode} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {successMsg && (
+            <div style={{
+              background: 'rgba(16,185,129,0.1)',
+              border: '1px solid rgba(16,185,129,0.3)',
+              borderRadius: 12, padding: '12px 16px', marginBottom: 20,
+              display: 'flex', alignItems: 'center', gap: 10,
+              color: '#10b981', fontSize: 13
+            }}>
+              <CheckCircle2 size={18} style={{ flexShrink: 0 }} />
+              <div>{successMsg}</div>
+            </div>
+          )}
+
+          {/* TAB 1: QUICK LOGIN BY PIN */}
+          {authMode === 'QUICK' && (
+            <form onSubmit={handleQuickLogin} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div>
                 <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginBottom: 6 }}>
-                  Telegram API ID
+                  Номер телефона
                 </label>
+                <input
+                  type="tel"
+                  value={quickPhone}
+                  onChange={e => setQuickPhone(e.target.value)}
+                  placeholder="+79998558576"
+                  required
+                  style={{
+                    width: '100%', background: 'rgba(0,0,0,0.4)',
+                    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
+                    padding: '12px 16px', color: '#fff', fontSize: 15, outline: 'none'
+                  }}
+                />
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4, display: 'block' }}>
+                  Номер вашего уже подключенного Telegram-аккаунта
+                </span>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)' }}>
+                    PIN-код безопасности
+                  </label>
+                  <span style={{ fontSize: 11, color: '#f4a623' }}>По умолчанию: 1234</span>
+                </div>
                 <div style={{ position: 'relative' }}>
+                  <input
+                    type="password"
+                    maxLength={10}
+                    value={quickPin}
+                    onChange={e => setQuickPin(e.target.value)}
+                    placeholder="1234"
+                    required
+                    style={{
+                      width: '100%', background: 'rgba(0,0,0,0.4)',
+                      border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
+                      padding: '12px 16px', color: '#fff', fontSize: 18,
+                      letterSpacing: 4, outline: 'none'
+                    }}
+                  />
+                  <Lock size={16} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)' }} />
+                </div>
+              </div>
+
+              <div style={{
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.05)',
+                borderRadius: 12, padding: 12, fontSize: 12, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5
+              }}>
+                💡 Быстрый доступ для управления парсингом с телефона, когда вы не за компьютером.
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                style={{
+                  width: '100%', padding: '14px', borderRadius: 12,
+                  background: 'linear-gradient(135deg, #e63946, #c0392b)',
+                  color: '#fff', fontWeight: 700, fontSize: 15, border: 'none',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 0 24px rgba(230,57,70,0.3)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  marginTop: 4
+                }}
+              >
+                {loading ? <Loader2 className="animate-spin" size={18} /> : <>⚡ Войти в GhostPost <ArrowRight size={18} /></>}
+              </button>
+            </form>
+          )}
+
+          {/* TAB 2: FULL TELEGRAM API LOGIN */}
+          {authMode === 'TELEGRAM' && (
+            step === 'CREDENTIALS' ? (
+              <form onSubmit={handleRequestCode} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginBottom: 6 }}>
+                    Telegram API ID
+                  </label>
                   <input
                     type="text"
                     value={apiId}
@@ -197,153 +380,153 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     }}
                   />
                 </div>
-              </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginBottom: 6 }}>
-                  Telegram API Hash
-                </label>
-                <input
-                  type="password"
-                  value={apiHash}
-                  onChange={e => setApiHash(e.target.value)}
-                  placeholder="32-символьный хэш"
-                  required
-                  style={{
-                    width: '100%', background: 'rgba(0,0,0,0.4)',
-                    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
-                    padding: '12px 16px', color: '#fff', fontSize: 14, outline: 'none'
-                  }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginBottom: 6 }}>
-                  Номер телефона (в международном формате)
-                </label>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={e => setPhone(e.target.value)}
-                  placeholder="+79001234567"
-                  required
-                  style={{
-                    width: '100%', background: 'rgba(0,0,0,0.4)',
-                    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
-                    padding: '12px 16px', color: '#fff', fontSize: 14, outline: 'none'
-                  }}
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowGuide(!showGuide)}
-                style={{
-                  background: 'none', border: 'none', color: '#f4a623',
-                  fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-                  textAlign: 'left', padding: 0
-                }}
-              >
-                <HelpCircle size={14} /> Как получить API ID и API Hash?
-              </button>
-
-              {showGuide && (
-                <div style={{
-                  background: 'rgba(244,166,35,0.08)',
-                  border: '1px solid rgba(244,166,35,0.2)',
-                  borderRadius: 12, padding: 14, fontSize: 12, color: 'rgba(255,255,255,0.7)', lineHeight: 1.6
-                }}>
-                  1. Перейдите на <b>my.telegram.org</b><br />
-                  2. Введите свой номер и код из Telegram<br />
-                  3. Откройте «API development tools»<br />
-                  4. Скопируйте App api_id и App api_hash
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginBottom: 6 }}>
+                    Telegram API Hash
+                  </label>
+                  <input
+                    type="password"
+                    value={apiHash}
+                    onChange={e => setApiHash(e.target.value)}
+                    placeholder="32-символьный хэш"
+                    required
+                    style={{
+                      width: '100%', background: 'rgba(0,0,0,0.4)',
+                      border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
+                      padding: '12px 16px', color: '#fff', fontSize: 14, outline: 'none'
+                    }}
+                  />
                 </div>
-              )}
 
-              <button
-                type="submit"
-                disabled={loading}
-                style={{
-                  width: '100%', padding: '14px', borderRadius: 12,
-                  background: 'linear-gradient(135deg, #e63946, #c0392b)',
-                  color: '#fff', fontWeight: 700, fontSize: 15, border: 'none',
-                  cursor: loading ? 'not-allowed' : 'pointer',
-                  boxShadow: '0 0 24px rgba(230,57,70,0.3)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  marginTop: 8
-                }}
-              >
-                {loading ? <Loader2 className="animate-spin" size={18} /> : <>Запросить код <ArrowRight size={18} /></>}
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleVerifyCode} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginBottom: 6 }}>
-                  Код подтверждения из Telegram
-                </label>
-                <input
-                  type="text"
-                  value={code}
-                  onChange={e => setCode(e.target.value)}
-                  placeholder="Код (например 12345)"
-                  required
-                  autoFocus
-                  style={{
-                    width: '100%', background: 'rgba(0,0,0,0.4)',
-                    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
-                    padding: '14px 16px', color: '#fff', fontSize: 18,
-                    letterSpacing: 4, textAlign: 'center', outline: 'none'
-                  }}
-                />
-              </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginBottom: 6 }}>
+                    Номер телефона (в международном формате)
+                  </label>
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={e => setPhone(e.target.value)}
+                    placeholder="+79001234567"
+                    required
+                    style={{
+                      width: '100%', background: 'rgba(0,0,0,0.4)',
+                      border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
+                      padding: '12px 16px', color: '#fff', fontSize: 14, outline: 'none'
+                    }}
+                  />
+                </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>
-                  Облачный пароль 2FA (если включён)
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="Пароль 2FA (необязательно)"
-                  style={{
-                    width: '100%', background: 'rgba(0,0,0,0.4)',
-                    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
-                    padding: '12px 16px', color: '#fff', fontSize: 14, outline: 'none'
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: 12 }}>
                 <button
                   type="button"
-                  onClick={() => setStep('CREDENTIALS')}
+                  onClick={() => setShowGuide(!showGuide)}
                   style={{
-                    flex: 1, padding: '12px', borderRadius: 12,
-                    background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
-                    color: 'rgba(255,255,255,0.7)', fontWeight: 600, fontSize: 14, cursor: 'pointer'
+                    background: 'none', border: 'none', color: '#f4a623',
+                    fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                    textAlign: 'left', padding: 0
                   }}
                 >
-                  Назад
+                  <HelpCircle size={14} /> Как получить API ID и API Hash?
                 </button>
+
+                {showGuide && (
+                  <div style={{
+                    background: 'rgba(244,166,35,0.08)',
+                    border: '1px solid rgba(244,166,35,0.2)',
+                    borderRadius: 12, padding: 14, fontSize: 12, color: 'rgba(255,255,255,0.7)', lineHeight: 1.6
+                  }}>
+                    1. Перейдите на <b>my.telegram.org</b><br />
+                    2. Введите свой номер и код из Telegram<br />
+                    3. Откройте «API development tools»<br />
+                    4. Скопируйте App api_id и App api_hash
+                  </div>
+                )}
 
                 <button
                   type="submit"
                   disabled={loading}
                   style={{
-                    flex: 2, padding: '12px', borderRadius: 12,
+                    width: '100%', padding: '14px', borderRadius: 12,
                     background: 'linear-gradient(135deg, #e63946, #c0392b)',
-                    color: '#fff', fontWeight: 700, fontSize: 14, border: 'none',
+                    color: '#fff', fontWeight: 700, fontSize: 15, border: 'none',
                     cursor: loading ? 'not-allowed' : 'pointer',
                     boxShadow: '0 0 24px rgba(230,57,70,0.3)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    marginTop: 8
                   }}
                 >
-                  {loading ? <Loader2 className="animate-spin" size={18} /> : 'Войти в систему'}
+                  {loading ? <Loader2 className="animate-spin" size={18} /> : <>Запросить код <ArrowRight size={18} /></>}
                 </button>
-              </div>
-            </form>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyCode} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginBottom: 6 }}>
+                    Код подтверждения из Telegram
+                  </label>
+                  <input
+                    type="text"
+                    value={code}
+                    onChange={e => setCode(e.target.value)}
+                    placeholder="Код (например 12345)"
+                    required
+                    autoFocus
+                    style={{
+                      width: '100%', background: 'rgba(0,0,0,0.4)',
+                      border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
+                      padding: '14px 16px', color: '#fff', fontSize: 18,
+                      letterSpacing: 4, textAlign: 'center', outline: 'none'
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>
+                    Облачный пароль 2FA (если включён)
+                  </label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="Пароль 2FA (необязательно)"
+                    style={{
+                      width: '100%', background: 'rgba(0,0,0,0.4)',
+                      border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
+                      padding: '12px 16px', color: '#fff', fontSize: 14, outline: 'none'
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button
+                    type="button"
+                    onClick={() => setStep('CREDENTIALS')}
+                    style={{
+                      flex: 1, padding: '12px', borderRadius: 12,
+                      background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
+                      color: 'rgba(255,255,255,0.7)', fontWeight: 600, fontSize: 14, cursor: 'pointer'
+                    }}
+                  >
+                    Назад
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    style={{
+                      flex: 2, padding: '12px', borderRadius: 12,
+                      background: 'linear-gradient(135deg, #e63946, #c0392b)',
+                      color: '#fff', fontWeight: 700, fontSize: 14, border: 'none',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      boxShadow: '0 0 24px rgba(230,57,70,0.3)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+                    }}
+                  >
+                    {loading ? <Loader2 className="animate-spin" size={18} /> : 'Войти в систему'}
+                  </button>
+                </div>
+              </form>
+            )
           )}
         </div>
 

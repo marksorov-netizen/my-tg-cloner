@@ -29,6 +29,8 @@ python-dotenv
 requests
 Pillow
 tenacity
+edge-tts
+gradio_client
 
 # Security
 cryptography              # Fernet шифрование tg_api_hash, session strings

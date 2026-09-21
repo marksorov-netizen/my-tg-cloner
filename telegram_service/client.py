@@ -305,6 +305,11 @@ class UserClientManager:
         api_hash = _try_decrypt(user.tg_api_hash_encrypted)
 
         if not session_str or not api_id or not api_hash:
+            if tg_manager.client and await tg_manager.is_authorized():
+                self._evict_if_full()
+                self._clients[user.id] = tg_manager.client
+                logger.info(f"[UserClients] Reusing active tg_manager client for user {user.id}")
+                return tg_manager.client
             raise ValueError(
                 "Сессия Telegram не найдена. Войдите заново на вкладке «Аккаунт Telegram»."
             )

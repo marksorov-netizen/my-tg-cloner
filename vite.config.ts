@@ -3,10 +3,16 @@ import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react({ fastRefresh: false })],
+  resolve: {
+    preserveSymlinks: true,
+  },
   server: {
     host: true,
     port: 5173,
+    fs: {
+      strict: false,
+    },
     // Прокси API запросов на backend во время разработки
     // changeOrigin + cookieDomainRewrite необходимы для корректной работы
     // httpOnly cookies (JWT) через Vite dev proxy

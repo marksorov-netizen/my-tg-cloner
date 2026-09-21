@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppConfig, SystemStats } from '../../types';
-import { Zap, Activity, AlertTriangle, Layers, ShoppingBag, Sparkles, ArrowRight, Play, CheckCircle2 } from 'lucide-react';
+import { Zap, Activity, AlertTriangle, Layers, ShoppingBag, Sparkles, ArrowRight, Play, CheckCircle2, Square } from 'lucide-react';
 import { ActionHistoryPanel } from '../../components/ActionHistoryPanel';
 import { getActionHistory } from '../../services/actionHistory';
 import { loadUserSavedConfig } from '../../services/userConfig';
@@ -25,12 +25,74 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ config, stats, onTog
   const totalDonors = new Set([...userCfg.storeDonors, ...userCfg.parserDonors]).size;
   const totalTargets = new Set([...userCfg.storeTargets, ...userCfg.parserTargets]).size;
 
-  const isStoreActive = taskExecutionService.getStoreState().isProcessing;
-  const isParserActive = taskExecutionService.getParserState().isProcessing;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    return taskExecutionService.subscribe(() => setTick(t => t + 1));
+  }, []);
+
+  const storeState = taskExecutionService.getStoreState();
+  const parserState = taskExecutionService.getParserState();
+  const isStoreActive = storeState.isProcessing;
+  const isParserActive = parserState.isProcessing;
   const isAnyActive = stats.isServiceRunning || isStoreActive || isParserActive;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {/* CROSS-DEVICE ACTIVE TASK BANNER */}
+      {(isStoreActive || isParserActive) && (
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(16,185,129,0.18), rgba(244,166,35,0.12))',
+          border: '1px solid rgba(16,185,129,0.4)',
+          borderRadius: 20, padding: '18px 24px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16,
+          boxShadow: '0 8px 30px rgba(16,185,129,0.15)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{
+              width: 46, height: 46, borderRadius: 14, background: 'rgba(16,185,129,0.25)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', fontSize: 22
+            }}>
+              ⚡
+            </div>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>Активная задача: {isStoreActive ? '🛒 Магазин-донор' : '📰 TG-парсер'}</span>
+                <span style={{ fontSize: 11, background: 'rgba(16,185,129,0.25)', color: '#10b981', padding: '2px 8px', borderRadius: 6, fontWeight: 700 }}>
+                  Синхронизировано
+                </span>
+              </div>
+              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginTop: 2 }}>
+                {isStoreActive ? storeState.statusMessage : parserState.statusMessage}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <button
+              onClick={() => navigate(isStoreActive ? '/dashboard/store' : '/dashboard/parser')}
+              style={{
+                background: 'rgba(255,255,255,0.08)', color: '#fff', fontWeight: 700, fontSize: 13,
+                padding: '10px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', cursor: 'pointer'
+              }}
+            >
+              Открыть детали
+            </button>
+            <button
+              onClick={() => {
+                if (isStoreActive) taskExecutionService.stopStore();
+                if (isParserActive) taskExecutionService.stopParser();
+              }}
+              style={{
+                background: 'rgba(230,57,70,0.2)', color: '#e63946', fontWeight: 800, fontSize: 13,
+                padding: '10px 16px', borderRadius: 10, border: '1px solid rgba(230,57,70,0.4)', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6
+              }}
+            >
+              <Square size={14} fill="currentColor" /> Остановить с любого устройства
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Banner if not authenticated */}
       {!isAuth && (
         <div style={{

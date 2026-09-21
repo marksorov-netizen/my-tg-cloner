@@ -85,9 +85,35 @@
         }
       }
     </style>
+    <script>
+      window.addEventListener('error', function(e) {
+        var el = document.getElementById('root');
+        if (el && (!el.children || el.children.length <= 1)) {
+          el.innerHTML = '<div style="color: #ff6b6b; padding: 24px; font-family: monospace; background: #141414; margin: 20px; border-radius: 12px; border: 1px solid rgba(239,68,68,0.5); line-height: 1.6;">'
+            + '<h3 style="margin-top:0; font-size: 18px;">❌ Ошибка загрузки скриптов:</h3>'
+            + '<p style="color: #fff; font-size: 14px;">' + (e.message || e.error || 'Неизвестная ошибка') + '</p>'
+            + '<div style="color: #888; font-size: 12px; margin-top: 10px;">Файл: ' + (e.filename || '—') + ':' + (e.lineno || '') + '</div>'
+            + '<div style="margin-top: 16px; color: #f4a623; font-size: 13px;">💡 Нажмите F12 в браузере и откройте вкладку Console для подробностей.</div>'
+            + '</div>';
+        }
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var el = document.getElementById('root');
+        if (el && (!el.children || el.children.length <= 1)) {
+          el.innerHTML = '<div style="color: #ff6b6b; padding: 24px; font-family: monospace; background: #141414; margin: 20px; border-radius: 12px; border: 1px solid rgba(239,68,68,0.5); line-height: 1.6;">'
+            + '<h3 style="margin-top:0; font-size: 18px;">❌ Ошибка промиса:</h3>'
+            + '<p style="color: #fff; font-size: 14px;">' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)) + '</p>'
+            + '</div>';
+        }
+      });
+    </script>
 </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="color: rgba(255,255,255,0.7); padding: 50px; text-align: center; font-family: sans-serif; font-size: 16px;">
+        ⏳ Загрузка GhostPost...
+      </div>
+    </div>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>

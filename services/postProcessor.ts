@@ -158,36 +158,98 @@ export const calculatePrices = (basePrice: number, rules: PricingRules) => {
   };
 };
 
-// NEW: Function to send to Telegram
-const publishToTelegram = async (text: string, config: AppConfig): Promise<void> => {
-  if (!config.telegramBotToken || !config.destinationChannel) {
-    console.warn("Skipping Telegram publish: No token or channel set.");
-    return;
-  }
+/**
+ * Абсолютная зачистка текста донора от телефонов, чужих ссылок, павильонов и рыночных маркеров.
+ */
+export const sanitizeDonorContent = (text: string, allowedBotUsername?: string): string => {
+  if (!text) return '';
 
-  const url = `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`;
-  
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        chat_id: config.destinationChannel,
-        text: text,
-        parse_mode: 'HTML',
-      }),
+  const botClean = allowedBotUsername?.trim().replace(/^@/, '').toLowerCase();
+
+  const phoneRuRegex = /(?:\+?7|8)[\s\-\(]*\d{3}[\s\-\)]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}/;
+  const phoneIntlRegex = /\+?\d{1,3}[\s\-\(]*\d{2,4}[\s\-\)]*[\d\s\-]{5,10}\d/;
+  const phoneKeywordRegex = /(?:тел(?:ефон)?|сот(?:овый)?|моб(?:ильный)?|ва(?:т|тс)?апп?|whatsapp|wa|viber|вайбер|tg|контакт[ы]?|номер|связь|звон[ок]?|заказ[ы]?)[\s\:\-—\.\(]*\+?[\d\s\-\(\)]{7,}\d/i;
+
+  const marketKeywordsRegex = /(?:садовод|тк\s*садовод|тяк(?:\s*москва)?|люблино|дубровка|южные\s*ворота|апрашка|апраксин|таганский\s*ряд|линия\s*\d+|корпус\s*[а-яё\d]+|павильон\s*[\w\-]+|место\s*[\w\-]+|этаж\s*\d+|контейнер\s*[\w\-]+)/i;
+  const pavilionCodeRegex = /\b[А-Яа-яA-Za-z]{1,3}\s*[-–—]\s*\d+[А-Яа-яA-Za-z]?\s*[-–—]\s*\d+\b/;
+
+  const donorCtaRegex = /^(?:[🛍️🛒👉👆📞📲☎️✅▪️•\*\s]*)(?:для\s*(?:оформления\s*)?заказа|оформить\s*заказ|заказ[ы]?\s*принимает|менеджер|по\s*вопросам\s*заказа|связаться|написать|бронь(?:\s*от)?|сборка|минималк[а-я]*|прямой\s*поставщик|поставщик|рынок|садовод|отправка\s*(?:по\s*всей\s*россии|автобусами|тк)|самовывоз|штучно\s*(?:от|по))[\s\:\-—\.\*]*$/i;
+  const supplierRawPriceRegex = /^(?:[▪️•\*\s]*)(?:штучно|опт(?:ом)?)\s*[:\-—]?\s*\d+.*$/i;
+  const donorHashtagsRegex = /#(?:садовод|velvet|тяк|рынок|поставщик|люблино|дубровка|женскаяодежда_садовод|мужскаяодежда_садовод|тксадовод|вещисадовод|одеждасадовод)[\w]*/gi;
+  const danglingIconsRegex = /^[🛍️🛒👉👆📞📲☎️✅▪️•\-–—\s\*\#]+$/;
+
+  const lines = text.split('\n');
+  const cleanedLines: string[] = [];
+
+  for (const line of lines) {
+    const stripped = line.trim();
+    if (!stripped) {
+      cleanedLines.push('');
+      continue;
+    }
+
+    // 1. Проверка на телефоны
+    if (phoneRuRegex.test(stripped) || phoneKeywordRegex.test(stripped) || phoneIntlRegex.test(stripped)) {
+      continue;
+    }
+
+    // 2. Проверка на призывы донора к заказу
+    if (donorCtaRegex.test(stripped)) {
+      continue;
+    }
+
+    // 3. Сырые цены поставщика
+    if (supplierRawPriceRegex.test(stripped)) {
+      continue;
+    }
+
+    // 4. Рыночные локации и павильоны
+    if (marketKeywordsRegex.test(stripped) || pavilionCodeRegex.test(stripped)) {
+      continue;
+    }
+
+    // 5. Очистка Markdown-ссылок
+    let lineClean = line.replace(/\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g, (match, linkText, url) => {
+      if (botClean && url.toLowerCase().includes(botClean)) {
+        return match;
+      }
+      return '';
     });
 
-    const data = await response.json();
-    if (!data.ok) {
-      throw new Error(`Telegram Error: ${data.description}`);
+    // 6. Очистка прямых URL
+    lineClean = lineClean.replace(/https?:\/\/\S+/g, (url) => {
+      if (botClean && url.toLowerCase().includes(botClean)) {
+        return url;
+      }
+      return '';
+    });
+
+    // 7. Очистка чужих упоминаний @username
+    lineClean = lineClean.replace(/@[\w_]+/g, (mention) => {
+      const uname = mention.replace(/^@/, '').toLowerCase();
+      if (botClean && botClean === uname) {
+        return mention;
+      }
+      return '';
+    });
+
+    // 8. Донорские хэштеги
+    lineClean = lineClean.replace(donorHashtagsRegex, '');
+
+    // 9. Висячие символы
+    const lineSub = lineClean.replace(/[\*\_`]/g, '').trim();
+    if (donorCtaRegex.test(lineSub) || danglingIconsRegex.test(lineClean)) {
+      continue;
     }
-  } catch (error: any) {
-    console.error("Publishing failed:", error);
-    throw new Error(`Ошибка отправки: ${error.message}. (Возможно, блокировка CORS в браузере)`);
+
+    if (lineClean.trim()) {
+      cleanedLines.push(lineClean.trimEnd());
+    } else {
+      cleanedLines.push('');
+    }
   }
+
+  return cleanedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 };
 
 export const processSinglePost = async (
@@ -198,17 +260,15 @@ export const processSinglePost = async (
   isStoreMode: boolean = false
 ): Promise<ProcessedPost & { calculatedPrice?: number; wholesalePrice?: number; dropPrice?: number }> => {
   const id = Math.random().toString(36).substr(2, 9);
-  let processedText = rawText;
   let errorMessage: string | undefined;
 
-  // 1. Clean links if basic cleaning requested (before AI)
-  if (config.removeLinks && !config.useAI) {
-    processedText = processedText.replace(/https?:\/\/\S+/g, '');
-  }
-
-  // 2. Price Extraction & Calculation (только для режима магазина или если включены правила цен)
+  // 1. Извлекаем цены донора из сырого текста ДО очистки
   const extracted = isStoreMode || config.pricing?.mode ? extractDetailedPrices(rawText) : { allPrices: [], maxPrice: null, minPrice: null, retailPrice: null, wholesalePrice: null, basePrice: null };
   const smartPrices = (isStoreMode || config.pricing?.mode) ? calculateSmartPrices(extracted, config.pricing) : null;
+
+  // 2. Предварительная зачистка текста донора перед отправкой в AI (удаляем телефоны, ссылки, павильоны)
+  const cleanInputText = sanitizeDonorContent(rawText, config.telegramBotToken);
+  let processedText = cleanInputText;
 
   const prices = smartPrices ? {
     mode: smartPrices.mode,
@@ -226,11 +286,13 @@ export const processSinglePost = async (
   if (config.useAI) {
     try {
       processedText = await rewriteContent(
-        rawText,
+        cleanInputText,
         smartPrices,
         config.removeLinks,
         customPrompt
       );
+      // Финишная гарантированная зачистка ПОСЛЕ работы AI
+      processedText = sanitizeDonorContent(processedText, config.telegramBotToken);
     } catch (e: any) {
       console.error("AI Generation failed:", e);
       aiSuccess = false;
@@ -261,12 +323,9 @@ export const processSinglePost = async (
   if (config.useAI && !aiSuccess && !config.useOriginalOnError) {
     status = 'pending_retry';
   } else if (isTestMode && config.telegramBotToken) {
-    try {
-      await publishToTelegram(processedText, config);
-    } catch (e: any) {
-      status = 'error';
-      errorMessage = e.message;
-    }
+    // Тестовая отправка из браузера отключена: токен нельзя светить в DevTools.
+    // Для реальной отправки используйте backend POST /batch/send.
+    console.warn('[security] test-mode direct Telegram publish disabled, use backend /batch/send');
   }
 
   return {
