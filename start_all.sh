@@ -6,18 +6,14 @@ echo "========================================="
 
 export PYTHONUNBUFFERED=1
 
-# Start FastAPI backend in background
-echo "[1/3] Starting FastAPI Backend (Port 8000)..."
+# Start FastAPI backend in background (server.py automatically manages order_bot)
+echo "[1/2] Starting FastAPI Backend (Port 8000)..."
 python -u server.py &
 
 # Wait 3 seconds for backend DB init
 sleep 3
 
-# Start Telegram Order Bot in background
-echo "[2/3] Starting Telegram Order Bot..."
-python -u order_bot_handler.py &
-
 # Start Frontend in production mode (serves pre-built dist/ instantly with 0% CPU)
-echo "[3/3] Starting Admin UI & Landing Page (Port 5173)..."
+echo "[2/2] Starting Admin UI & Landing Page (Port 5173)..."
 npm run preview -- --host 0.0.0.0 --port 5173
 
