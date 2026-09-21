@@ -120,7 +120,7 @@ app = FastAPI(title="MyBotAi11 API", version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|172\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|.*\.ngrok.*|.*\.loca\.lt)(:\d+)?$",
+    allow_origin_regex=r"^https?://.*$",
     allow_credentials=True,                                         # обязательно для cookies
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
