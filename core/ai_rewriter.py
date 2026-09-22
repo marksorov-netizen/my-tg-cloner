@@ -28,9 +28,31 @@ ai_semaphore = asyncio.Semaphore(3)
 RETRY_DELAYS = [5, 15, 45]
 
 
+import re
+
 class AIRewriteError(Exception):
     """Исключение при неисправимой ошибке AI рерайта."""
     pass
+
+
+def clean_ai_commentary(text: str) -> str:
+    """Удаляет вводные фразы и мета-комментарии нейросети (почему этот текст, пояснения и т.д.)."""
+    if not text:
+        return text
+    
+    cleaned = text.strip()
+    # Удаляем кавычки вокруг всего текста если модель обернула его в ""
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or (cleaned.startswith('«') and cleaned.endswith('»')):
+        cleaned = cleaned[1:-1].strip()
+        
+    # Удаляем вводные фразы типа "Вот продающий вариант...", "Конечно, вот переписанный пост: "
+    cleaned = re.sub(r'^(?:Вот\s+(?:готовый|продающий|переписанный|новый|отредактированный)\s+[^\n]+:|Конечно[^\n]*:|Вот\s+ваш\s+пост[^\n]*:)\s*\n*', '', cleaned, flags=re.I)
+    
+    # Удаляем мета-комментарии в конце поста ("### Почему этот текст...", "### Пояснения:", "---", etc.)
+    cleaned = re.sub(r'\n+###?\s*(?:Почему этот текст|Пояснени|Обоснование|Комментари|Разбор|Что было изменено)[^\n]*[\s\S]*$', '', cleaned, flags=re.I)
+    cleaned = re.sub(r'\n+\*?(?:Не забудьте прикрепить|Примечание:)[^\n]*\*?\s*$', '', cleaned, flags=re.I)
+    
+    return cleaned.strip()
 
 
 async def _call_openai_compatible_api(
@@ -199,8 +221,9 @@ async def call_gemini_with_retry(
                         system_prompt=system_prompt,
                     )
 
+                clean_text = clean_ai_commentary(rewritten)
                 logger.info(f"[AI Queue] Attempt {attempt}/{max_attempts} SUCCESS | tokens={tokens}")
-                return rewritten, tokens
+                return clean_text, tokens
 
             except Exception as e:
                 last_exception = e
