@@ -28,6 +28,7 @@ python-multipart
 python-dotenv
 requests
 Pillow
+opencv-python-headless
 tenacity
 edge-tts
 gradio_client

@@ -3,6 +3,8 @@ services:
     image: postgres:16-alpine
     container_name: ghostpost_db
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ghostpost}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_env}
@@ -23,9 +25,12 @@ services:
     ports:
       - "5173:5173"   # Лендинг и Панель управления (http://localhost:5173)
       - "8000:8000"   # FastAPI Backend (http://localhost:8000)
+    env_file:
+      - .env
     volumes:
       - ./session_manager.session:/app/session_manager.session
       - ./temp_media:/app/temp_media
+      - ./.env:/app/.env:ro
     environment:
       - PYTHONUNBUFFERED=1
       # PostgreSQL: сервер (asyncpg) и бот заказов (psycopg2) сами приведут URL к своему драйверу
