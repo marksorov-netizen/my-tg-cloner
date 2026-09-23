@@ -80,11 +80,29 @@ export const rewriteContent = async (
     userPrompt = `${basePrompt}\n\nПравила:\n${antiDonorInstruction}\nСохрани суть оригинала.\nВерни ТОЛЬКО готовый текст поста без вступлений, кавычек и объяснений.\n\nИсходный пост:\n"${text}"`;
   }
 
+  const buildFallback = () => {
+    let fallbackText = text.replace(/https?:\/\/\S+/g, '').replace(/@\w+/g, '').trim();
+    if (prices) {
+      if (prices.mode === 'single' || (!prices.opt && !prices.drop)) {
+        fallbackText += `\n\n💰 Цена: ${prices.retail || prices.singlePrice} ${prices.symbol}`;
+      } else if (prices.mode === 'opt_retail') {
+        fallbackText += `\n\n📦 Опт: ${prices.opt} ${prices.symbol}\n🏷️ Розница: ${prices.retail} ${prices.symbol}`;
+      } else {
+        fallbackText += `\n\n📦 Опт: ${prices.opt} ${prices.symbol}\n🤝 Дроп: ${prices.drop} ${prices.symbol}\n🏷️ Розница: ${prices.retail} ${prices.symbol}`;
+      }
+    }
+    return fallbackText;
+  };
+
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
     const response = await fetch(`${BACKEND_URL}/api/ai/rewrite`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',  // ← JWT cookie для авторизации на backend
+      signal: controller.signal,
       body: JSON.stringify({
         text,
         prompt: userPrompt,
@@ -92,10 +110,12 @@ export const rewriteContent = async (
         mode: isProduct ? 'product' : 'news',
       }),
     });
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const err = await response.json().catch(() => ({ detail: 'Неизвестная ошибка сервера' }));
-      throw new Error(err.detail || `HTTP ${response.status}`);
+      const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+      console.warn(`[Gemini] Backend AI returned ${response.status}: ${err.detail}. Using formatted fallback.`);
+      return buildFallback();
     }
 
     const data: RewriteResult = await response.json();
@@ -114,26 +134,13 @@ export const rewriteContent = async (
     const isRefusal = refusalPatterns.some(pat => candidate.toLowerCase().includes(pat));
     if (isRefusal) {
       console.warn('[Gemini] Model returned refusal commentary, falling back to cleaned original text');
-      let fallbackText = text.replace(/https?:\/\/\S+/g, '').replace(/@\w+/g, '').trim();
-      if (prices) {
-        if (prices.mode === 'single' || (!prices.opt && !prices.drop)) {
-          fallbackText += `\n\n💰 Цена: ${prices.retail} ${prices.symbol}`;
-        } else if (prices.mode === 'opt_retail') {
-          fallbackText += `\n\n📦 Опт: ${prices.opt} ${prices.symbol}\n🏷️ Розница: ${prices.retail} ${prices.symbol}`;
-        } else {
-          fallbackText += `\n\n📦 Опт: ${prices.opt} ${prices.symbol}\n🤝 Дроп: ${prices.drop} ${prices.symbol}\n🏷️ Розница: ${prices.retail} ${prices.symbol}`;
-        }
-      }
-      return fallbackText;
+      return buildFallback();
     }
 
-    return candidate || text;
+    return candidate || buildFallback();
 
   } catch (error: any) {
-    console.error('[Gemini] API Error:', error);
-    if (error.message?.includes('fetch') || error.message?.includes('NetworkError')) {
-      throw new Error('Backend недоступен. Убедитесь, что запущен server.py');
-    }
-    throw error;
+    console.warn('[Gemini] AI Rewrite unavailable or timed out:', error?.message);
+    return buildFallback();
   }
 };

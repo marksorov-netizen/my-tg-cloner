@@ -268,6 +268,7 @@ export const StorePage: React.FC<StorePageProps> = ({ config, setConfig }) => {
           ...config,
           useAI: true,
           removeLinks: true,
+          useOriginalOnError: true,
           pricing: {
             mode: priceMode,
             singleMarkupPercent: singleMarkupPct,
@@ -276,7 +277,7 @@ export const StorePage: React.FC<StorePageProps> = ({ config, setConfig }) => {
             retailPercent: retailPct,
             currencySymbol: currency
           }
-        }, false);
+        }, false, undefined, true);
 
         if (cancelRef.current || taskExecutionService.isStoreCancelled()) break;
 

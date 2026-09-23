@@ -24,8 +24,11 @@ logger = logging.getLogger("ai_rewriter")
 # Семафор: не более 3 одновременных запросов к AI
 ai_semaphore = asyncio.Semaphore(3)
 
-# Задержки между повторными попытками (в секундах)
-RETRY_DELAYS = [5, 15, 45]
+# Короткие задержки между попытками: быстро перезапрашиваем, не подвешивая интерфейс
+RETRY_DELAYS = [1, 2]
+
+# Жесткие тайм-ауты: соединение макс 3.5 сек, чтение макс 15 сек
+AI_HTTP_TIMEOUT = httpx.Timeout(timeout=15.0, connect=3.5)
 
 
 import re
@@ -61,10 +64,10 @@ async def _call_openai_compatible_api(
     prompt: str,
     system_prompt: Optional[str] = None,
     base_url: str = "https://po.zapro.su/v1",
-    model_name: str = "gpt-4o-mini",
+    model_name: str = "gemini-3.6-flash",
     model_override: Optional[str] = None,
 ) -> Tuple[str, int]:
-    """Запрос к OpenAI-совместимому API (Zapro.su, OpenRouter, OpenAI, etc.)."""
+    """Запрос к OpenAI-совместимому API (Zapro.su, OpenRouter, Groq, VseGPT, OpenAI, etc.)."""
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -87,10 +90,10 @@ async def _call_openai_compatible_api(
     }
 
     logger.info(f"[AI Queue] Calling OpenAI-compatible API ({endpoint}) model={payload['model']}...")
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=AI_HTTP_TIMEOUT) as client:
         resp = await client.post(endpoint, json=payload, headers=headers)
         if resp.status_code != 200:
-            logger.error(f"[AI Queue] API error {resp.status_code}: {resp.text}")
+            logger.error(f"[AI Queue] API error {resp.status_code}: {resp.text[:300]}")
             raise AIRewriteError(f"API Error HTTP {resp.status_code}: {resp.text[:200]}")
         
         data = resp.json()
@@ -108,35 +111,46 @@ async def _call_gemini_native(
     prompt: str,
     system_prompt: Optional[str] = None,
 ) -> Tuple[str, int]:
-    """Нативный вызов Google Gemini API."""
+    """Нативный вызов Google Gemini API с поддержкой актуальных моделей 3.6/3.5."""
     import google.generativeai as genai
     genai.configure(api_key=api_key)
 
     full_prompt = f"{prompt}\n\nТекст для обработки:\n{text}"
 
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        system_instruction=system_prompt or "Ты профессиональный SMM-менеджер.",
-        generation_config=genai.GenerationConfig(
-            temperature=0.85,
-            max_output_tokens=2048,
-        ),
-    )
+    gemini_models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"]
+    last_err = None
 
-    loop = asyncio.get_running_loop()
-    response = await loop.run_in_executor(
-        None,
-        lambda: model.generate_content(full_prompt)
-    )
+    for m_name in gemini_models:
+        try:
+            model = genai.GenerativeModel(
+                model_name=m_name,
+                system_instruction=system_prompt or "Ты профессиональный SMM-менеджер.",
+                generation_config=genai.GenerationConfig(
+                    temperature=0.85,
+                    max_output_tokens=2048,
+                ),
+            )
 
-    rewritten = response.text or text
-    tokens_used = 0
-    try:
-        tokens_used = response.usage_metadata.total_token_count
-    except Exception:
-        pass
+            loop = asyncio.get_running_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: model.generate_content(full_prompt)),
+                timeout=12.0
+            )
 
-    return rewritten, tokens_used
+            rewritten = response.text or text
+            tokens_used = 0
+            try:
+                tokens_used = response.usage_metadata.total_token_count
+            except Exception:
+                pass
+
+            return rewritten, tokens_used
+        except Exception as e:
+            last_err = e
+            logger.warning(f"[Gemini Native] Model {m_name} failed: {e}")
+            continue
+
+    raise AIRewriteError(f"All Gemini native models failed: {last_err}")
 
 
 async def call_gemini_with_retry(
@@ -147,62 +161,76 @@ async def call_gemini_with_retry(
     api_key: Optional[str] = None,
 ) -> Tuple[str, int]:
     """
-    Выполняет запрос к AI с авто-выбором провайдера (Zapro.su / OpenAI / Gemini).
-
-    Порядок поиска ключа:
-    1. Переданный явно `api_key`
-    2. ZAPRO_API_KEY из .env
-    3. OPENAI_API_KEY из .env
-    4. GEMINI_API_KEY из .env
+    Выполняет запрос к AI с авто-выбором провайдера (Zapro.su / OpenRouter / Groq / VseGPT / OpenAI / Gemini).
     """
     zapro_key = os.getenv("ZAPRO_API_KEY", "").strip()
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    vsegpt_key = os.getenv("VSEGPT_API_KEY", "").strip()
+
     zapro_url = os.getenv("ZAPRO_BASE_URL", os.getenv("AI_BASE_URL", "https://po.zapro.su/v1")).strip()
 
     resolved_key = (api_key or "").strip()
     provider = "auto"
+    base_url = zapro_url
 
     if not resolved_key:
-        if zapro_key:
-            resolved_key = zapro_key
-            provider = "zapro"
-        elif openai_key:
-            resolved_key = openai_key
-            provider = "openai"
+        pref = os.getenv("AI_PROVIDER", "").lower().strip()
+        if pref == "openrouter" and openrouter_key:
+            resolved_key, provider, base_url = openrouter_key, "openrouter", "https://openrouter.ai/api/v1"
+        elif pref == "groq" and groq_key:
+            resolved_key, provider, base_url = groq_key, "groq", "https://api.groq.com/openai/v1"
+        elif pref == "vsegpt" and vsegpt_key:
+            resolved_key, provider, base_url = vsegpt_key, "vsegpt", "https://api.vsegpt.ru/v1"
+        elif pref == "gemini" and gemini_key:
+            resolved_key, provider = gemini_key, "gemini"
+        elif pref == "zapro" and zapro_key:
+            resolved_key, provider, base_url = zapro_key, "zapro", zapro_url
+        elif pref == "openai" and openai_key:
+            resolved_key, provider, base_url = openai_key, "openai", "https://api.openai.com/v1"
+        elif zapro_key:
+            resolved_key, provider, base_url = zapro_key, "zapro", zapro_url
+        elif openrouter_key:
+            resolved_key, provider, base_url = openrouter_key, "openrouter", "https://openrouter.ai/api/v1"
+        elif groq_key:
+            resolved_key, provider, base_url = groq_key, "groq", "https://api.groq.com/openai/v1"
         elif gemini_key:
-            resolved_key = gemini_key
-            provider = "gemini"
+            resolved_key, provider = gemini_key, "gemini"
+        elif openai_key:
+            resolved_key, provider, base_url = openai_key, "openai", "https://api.openai.com/v1"
 
     if not resolved_key:
         raise ValueError("AI_API_KEY_MISSING")
 
-    # Авто-определение провайдера по формату ключа или установленным переменным
     is_openai_compatible = (
-        provider in ("zapro", "openai") or
-        zapro_key or
+        provider in ("zapro", "openai", "openrouter", "groq", "vsegpt") or
         resolved_key.startswith("zp-") or
         resolved_key.startswith("sk-") or
-        os.getenv("AI_PROVIDER") in ("zapro", "openai", "openrouter")
+        resolved_key.startswith("gsk_")
     )
 
     async with ai_semaphore:
-        await asyncio.sleep(1.5)
-
         max_attempts = len(RETRY_DELAYS) + 1
         last_exception = None
 
-        candidate_models = [
-            os.getenv("ZAPRO_MODEL", "gemini-3.5-flash"),
-            "gemini-3.5-flash",
-            "gemini-3.6-flash",
-            "gpt-5.4-mini"
-        ]
+        if provider == "groq":
+            candidate_models = ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"]
+        elif provider == "openrouter":
+            candidate_models = ["google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"]
+        else:
+            candidate_models = [
+                os.getenv("ZAPRO_MODEL", "gemini-3.6-flash"),
+                "gemini-3.6-flash",
+                "claude-haiku-4-5-20251001",
+                "gpt-4o-mini"
+            ]
 
         for attempt in range(1, max_attempts + 1):
             try:
                 target_model = candidate_models[(attempt - 1) % len(candidate_models)]
-                logger.info(f"[AI Queue] Attempt {attempt}/{max_attempts} (provider: {'Zapro/OpenAI' if is_openai_compatible else 'Gemini'}, model: {target_model})...")
+                logger.info(f"[AI Queue] Attempt {attempt}/{max_attempts} (provider: {provider}, model: {target_model})...")
 
                 if is_openai_compatible:
                     rewritten, tokens = await _call_openai_compatible_api(
@@ -210,7 +238,7 @@ async def call_gemini_with_retry(
                         text=text,
                         prompt=prompt,
                         system_prompt=system_prompt,
-                        base_url=zapro_url,
+                        base_url=base_url,
                         model_override=target_model,
                     )
                 else:

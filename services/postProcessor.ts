@@ -281,6 +281,8 @@ export const processSinglePost = async (
 
   const originalPrice = extracted.basePrice;
 
+  const useOriginalOnError = config.useOriginalOnError !== undefined ? config.useOriginalOnError : true;
+
   // 3. AI Processing
   let aiSuccess = true;
   if (config.useAI) {
@@ -296,21 +298,15 @@ export const processSinglePost = async (
     } catch (e: any) {
       console.error("AI Generation failed:", e);
       aiSuccess = false;
-      errorMessage = e.message || "Пост отложен из-за ошибки AI, будет обработан позже";
-
-      if (config.useOriginalOnError && smartPrices) {
-        if (smartPrices.mode === 'single' || (!smartPrices.opt && !smartPrices.drop)) {
-          processedText += `\n\n💰 Цена: ${smartPrices.retail} ${smartPrices.symbol}`;
-        } else if (smartPrices.mode === 'opt_retail') {
-          processedText += `\n\n📦 Опт: ${smartPrices.opt} ${smartPrices.symbol}\n🏷️ Розница: ${smartPrices.retail} ${smartPrices.symbol}`;
-        } else {
-          processedText += `\n\n📦 Опт: ${smartPrices.opt} ${smartPrices.symbol}\n🤝 Дроп: ${smartPrices.drop} ${smartPrices.symbol}\n🏷️ Розница: ${smartPrices.retail} ${smartPrices.symbol}`;
-        }
-      }
+      errorMessage = e.message || "Ошибка AI";
+      processedText = cleanInputText;
     }
-  } else if (smartPrices) {
+  }
+
+  // Гарантируем, что в режиме магазина итоговые рассчитанные цены присутствуют в тексте
+  if (smartPrices && (!processedText.includes(smartPrices.symbol) || !aiSuccess)) {
     if (smartPrices.mode === 'single' || (!smartPrices.opt && !smartPrices.drop)) {
-      processedText += `\n\n💰 Цена: ${smartPrices.retail} ${smartPrices.symbol}`;
+      processedText += `\n\n💰 Цена: ${smartPrices.retail || smartPrices.singlePrice} ${smartPrices.symbol}`;
     } else if (smartPrices.mode === 'opt_retail') {
       processedText += `\n\n📦 Опт: ${smartPrices.opt} ${smartPrices.symbol}\n🏷️ Розница: ${smartPrices.retail} ${smartPrices.symbol}`;
     } else {
@@ -320,11 +316,9 @@ export const processSinglePost = async (
 
   // 4. Determine status
   let status: 'success' | 'error' | 'pending_retry' = 'success';
-  if (config.useAI && !aiSuccess && !config.useOriginalOnError) {
+  if (config.useAI && !aiSuccess && !useOriginalOnError) {
     status = 'pending_retry';
   } else if (isTestMode && config.telegramBotToken) {
-    // Тестовая отправка из браузера отключена: токен нельзя светить в DevTools.
-    // Для реальной отправки используйте backend POST /batch/send.
     console.warn('[security] test-mode direct Telegram publish disabled, use backend /batch/send');
   }
 
