@@ -313,6 +313,14 @@ export const apiService = {
     return apiFetch('/api/tasks/status');
   },
 
+  /** Запуск новой задачи с гарантированным сбросом флагов остановки на сервере */
+  startTask: async (data: Record<string, any> = {}): Promise<{ status: string; state: any }> => {
+    return apiFetch('/api/tasks/start', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   /** Синхронизировать прогресс выполнения с сервером */
   syncTaskProgress: async (data: Record<string, any>): Promise<{ status: string }> => {
     return apiFetch('/api/tasks/sync', {

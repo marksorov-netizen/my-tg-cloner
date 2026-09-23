@@ -55,6 +55,7 @@ class TaskExecutionService {
   private listeners: Set<() => void> = new Set();
   private pollIntervalId: any = null;
   private isMasterRunner: boolean = false; // true если именно этот браузер исполняет цикл постов
+  private taskStartedAt: number = 0;
 
   constructor() {
     this.startStatusPolling();
@@ -71,12 +72,19 @@ class TaskExecutionService {
   public startStoreTask() {
     this.storeCancelled = false;
     this.isMasterRunner = true;
+    this.taskStartedAt = Date.now();
     this.updateStoreState({
       isProcessing: true,
       isLiveMonitoring: false,
       countdownSec: 0,
+      statusMessage: 'Запуск процесса...',
     });
-    this.syncWithServer('store');
+    apiService.startTask({
+      module: 'store',
+      donor: this.storeTask.donors[0] || '',
+      targets: this.storeTask.targets,
+      total: this.storeTask.total,
+    }).catch(() => {});
   }
 
   public stopStore(remoteOnly: boolean = false) {
@@ -100,12 +108,19 @@ class TaskExecutionService {
   public startParserTask() {
     this.parserCancelled = false;
     this.isMasterRunner = true;
+    this.taskStartedAt = Date.now();
     this.updateParserState({
       isProcessing: true,
       isLiveMonitoring: false,
       countdownSec: 0,
+      statusMessage: 'Запуск процесса...',
     });
-    this.syncWithServer('parser');
+    apiService.startTask({
+      module: 'parser',
+      donor: this.parserTask.donors[0] || '',
+      targets: this.parserTask.targets,
+      total: this.parserTask.total,
+    }).catch(() => {});
   }
 
   public stopParser(remoteOnly: boolean = false) {
@@ -188,21 +203,29 @@ class TaskExecutionService {
 
         // Если сервер сигнализирует should_stop, а мы локально выполняли задачу — останавливаем
         if (serverStatus.should_stop) {
-          if (this.storeTask.isProcessing) {
-            this.storeCancelled = true;
-            this.updateStoreState({
-              isProcessing: false,
-              isLiveMonitoring: false,
-              statusMessage: '⏹ Остановлено удаленно через телефон'
-            });
+          // Защита от устаревших флагов: если остановка на сервере произошла ДО старта текущей задачи, игнорируем!
+          const stopTime = serverStatus.updated_at ? new Date(serverStatus.updated_at).getTime() : 0;
+          if (this.taskStartedAt && stopTime < this.taskStartedAt) {
+            return;
           }
-          if (this.parserTask.isProcessing) {
-            this.parserCancelled = true;
-            this.updateParserState({
-              isProcessing: false,
-              isLiveMonitoring: false,
-              statusMessage: '⏹ Остановлено удаленно через телефон'
-            });
+
+          if (this.isMasterRunner) {
+            if (this.storeTask.isProcessing) {
+              this.storeCancelled = true;
+              this.updateStoreState({
+                isProcessing: false,
+                isLiveMonitoring: false,
+                statusMessage: '⏹ Остановлено удаленно через телефон'
+              });
+            }
+            if (this.parserTask.isProcessing) {
+              this.parserCancelled = true;
+              this.updateParserState({
+                isProcessing: false,
+                isLiveMonitoring: false,
+                statusMessage: '⏹ Остановлено удаленно через телефон'
+              });
+            }
           }
           return;
         }

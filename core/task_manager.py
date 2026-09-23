@@ -31,7 +31,28 @@ class BackgroundTaskManager:
         return dict(self.state)
 
     def update_state(self, updates: Dict[str, Any]):
+        if updates.get("is_running"):
+            self.state["should_stop"] = False
+            updates["should_stop"] = False
+            if not self.state.get("is_running"):
+                self.state["started_at"] = datetime.utcnow().isoformat()
         self.state.update(updates)
+        self.state["updated_at"] = datetime.utcnow().isoformat()
+
+    def start(self, module: str = "store", donor: str = "", targets: list = None, total: int = 0):
+        self.state["is_running"] = True
+        self.state["is_live_monitoring"] = False
+        self.state["should_stop"] = False
+        self.state["module"] = module
+        if donor:
+            self.state["donor"] = donor
+        if targets is not None:
+            self.state["targets"] = targets
+        if total:
+            self.state["total"] = total
+        self.state["current"] = 0
+        self.state["status_message"] = "Запуск процесса..."
+        self.state["started_at"] = datetime.utcnow().isoformat()
         self.state["updated_at"] = datetime.utcnow().isoformat()
 
     def stop(self):
@@ -43,6 +64,7 @@ class BackgroundTaskManager:
 
     def reset_stop(self):
         self.state["should_stop"] = False
+        self.state["updated_at"] = datetime.utcnow().isoformat()
 
     def add_log(self, title: str, text: str, status: str = "info"):
         log_entry = {

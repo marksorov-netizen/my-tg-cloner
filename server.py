@@ -598,9 +598,25 @@ async def get_tasks_status(current_user: User = Depends(get_current_user)):
     return task_manager.get_state()
 
 
+@app.post("/api/tasks/start")
+async def start_tasks(data: dict = None, current_user: User = Depends(get_current_user)):
+    """Сбрасывает флаг остановки и переводит менеджер задач в активное состояние."""
+    payload = data or {}
+    task_manager.start(
+        module=payload.get("module", "store"),
+        donor=payload.get("donor", ""),
+        targets=payload.get("targets", []),
+        total=payload.get("total", 0)
+    )
+    logger.info(f"[TaskManager] Task started for user {current_user.phone_number} (module: {payload.get('module')})")
+    return {"status": "started", "state": task_manager.get_state()}
+
+
 @app.post("/api/tasks/sync")
 async def sync_tasks_status(data: dict, current_user: User = Depends(get_current_user)):
     """Синхронизирует состояние выполнения задачи с сервером."""
+    if data.get("is_running"):
+        task_manager.reset_stop()
     task_manager.update_state(data)
     return {"status": "synced"}
 
