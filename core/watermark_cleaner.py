@@ -1,16 +1,18 @@
 """
 core/watermark_cleaner.py
 
-Высокоскоростной модуль умной очистки водяных знаков и брендирования фото (0 ₽, 100% качество донора):
-1. Сохраняет оригинальное 4K разрешение фото, ткань, свет, модель и детали.
+Локальная очистка водяных знаков и брендирование фото:
+1. Сохраняет исходные размеры и не изменяет оригинальный файл.
 2. Smart Auto-Detection: сканирует края фото (слева, справа, в углах) и автоматически находит
    водяные знаки донора (включая боковые плашки типа VELVET, номера павильонов Садовода и ссылки на каналы).
-3. Inpainting (Telea): затирает водяные знаки без замыливания лиц и одежды за 0.03–0.05 сек.
+3. Inpainting (Telea): затирает водяные знаки в выделенной маске; точность восстановления зависит от фона.
 4. Branded Badge: накладывает фирменный стильный шильдик магазина в нижний угол.
 """
 
 import os
 import time
+import asyncio
+import uuid
 import logging
 from typing import Optional, List, Tuple
 import numpy as np
@@ -45,77 +47,42 @@ class WatermarkCleaner:
         if not HAS_CV2:
             return mask
 
-        img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        sat = img_hsv[:, :, 1]
-        val = img_hsv[:, :, 2]
-
-        # Защита модели в центре: центральные 48% ширины от макушки до 85% высоты
-        safe_x1, safe_x2 = int(w * 0.26), int(w * 0.74)
-        safe_y1, safe_y2 = 0, int(h * 0.85)
-
-        MIN_AREA = max(150, int(w * h * 0.0003))
-        MAX_AREA = int(w * h * 0.05)
-        MAX_W = int(w * 0.32)
-        MAX_H = int(h * 0.22)
-
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        hue, sat, val = cv2.split(hsv)
+        # Conservative coloured text detection. Saturation alone also selects
+        # clothing, skin and furniture, so it cannot identify a watermark.
+        colored = (((hue >= 140) | (hue <= 5)) & (sat > 35) & (val > 130))
+        colored |= ((hue >= 20) & (hue <= 38) & (sat > 100) & (val > 170))
+        seed = colored.astype(np.uint8) * 255
+        seed[:int(h * .82), int(w * .26):int(w * .74)] = 0
+        grouped = cv2.dilate(seed, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 5)))
+        contours, _ = cv2.findContours(grouped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         found_boxes = []
-
-        # 1. Неоновые и насыщенные стикеры/плашки (розовый VELVET, цветные штампы)
-        mask_neon = ((sat > 75) & (val > 70)).astype(np.uint8) * 255
-        mask_neon[safe_y1:safe_y2, safe_x1:safe_x2] = 0
-
-        kernel_neon = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-        dilated_neon = cv2.dilate(mask_neon, kernel_neon, iterations=2)
-        cnts_neon, _ = cv2.findContours(dilated_neon, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        for c in cnts_neon:
-            area = cv2.contourArea(c)
-            if area < MIN_AREA or area > MAX_AREA:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        for contour in contours:
+            x, y, bw, bh = cv2.boundingRect(contour)
+            if bw < 12 or bh < 5 or bw > w * .35 or bh > h * .15:
                 continue
-            bx, by, bw, bh = cv2.boundingRect(c)
-            if bw > MAX_W or bh > MAX_H:
+            if not (x + bw <= w * .30 or x >= w * .70 or y >= h * .82):
                 continue
-            # Проверяем, что плашка находится во внешней зоне кадра (бока или верх/низ)
-            if (bx < w * 0.28) or (bx + bw > w * 0.72) or (by < h * 0.20) or (by + bh > h * 0.85):
-                found_boxes.append((bx, by, bw, bh))
-
-        # 2. Высококонтрастный текст и штампы в углах (#5382, артикулы, белые цифры)
-        blur_val = cv2.GaussianBlur(val, (5, 5), 0)
-        contrast = cv2.absdiff(val, blur_val)
-        mask_text = ((contrast > 45) & ((sat > 40) | (val > 220))).astype(np.uint8) * 255
-        mask_text[safe_y1:safe_y2, safe_x1:safe_x2] = 0
-
-        corner_w = int(w * 0.25)
-        corner_h = int(h * 0.18)
-        corner_zones = [
-            (0, 0, corner_w, corner_h),                  # верхний левый
-            (w - corner_w, 0, w, corner_h),              # верхний правый
-            (0, h - corner_h, corner_w, h),              # нижний левый
-            (w - corner_w, h - corner_h, w, h)           # нижний правый
-        ]
-
-        kernel_text = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-        for cx1, cy1, cx2, cy2 in corner_zones:
-            zone = np.zeros_like(mask_text)
-            zone[cy1:cy2, cx1:cx2] = mask_text[cy1:cy2, cx1:cx2]
-            dilated_zone = cv2.dilate(zone, kernel_text, iterations=2)
-            cnts_text, _ = cv2.findContours(dilated_zone, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for c in cnts_text:
-                area = cv2.contourArea(c)
-                if area < MIN_AREA or area > int(w * h * 0.03):
-                    continue
-                bx, by, bw, bh = cv2.boundingRect(c)
-                if bw > corner_w or bh > corner_h:
-                    continue
-                found_boxes.append((bx, by, bw, bh))
-
-        PAD = 10
-        for bx, by, bw, bh in found_boxes:
-            fx1 = max(0, bx - PAD)
-            fy1 = max(0, by - PAD)
-            fx2 = min(w, bx + bw + PAD)
-            fy2 = min(h, by + bh + PAD)
-            cv2.rectangle(mask, (fx1, fy1), (fx2, fy2), 255, -1)
+            roi = seed[y:y+bh, x:x+bw]
+            # A stamp consists of several thin strokes rather than a solid object.
+            lettering = (gray[y:y+bh, x:x+bw] > 215).astype(np.uint8) * 255
+            count, _, stats, _ = cv2.connectedComponentsWithStats(lettering)
+            significant = sum(1 for st in stats[1:] if st[cv2.CC_STAT_AREA] >= 3)
+            if significant < 3:
+                continue
+            x1, y1 = max(0, x - 3), max(0, y - 3)
+            x2, y2 = min(w, x + bw + 3), min(h, y + bh + max(6, bh // 3))
+            local = seed[y1:y2, x1:x2].copy()
+            # White lettering belongs to the coloured stamp, but only in its ROI.
+            local[gray[y1:y2, x1:x2] > 210] = 255
+            if cv2.countNonZero(roi) > roi.size * .30:
+                # Verified text over a solid coloured banner: include its fill.
+                local[:] = 255
+            mask[y1:y2, x1:x2] = local
+            found_boxes.append((x1, y1, x2-x1, y2-y1))
+        mask = cv2.dilate(mask, np.ones((3, 3), np.uint8))
 
         logger.info(f"[WatermarkCleaner] Auto-detected {len(found_boxes)} watermark regions")
         return mask
@@ -157,12 +124,57 @@ class WatermarkCleaner:
         else:
             cv2.rectangle(mask, (int(w * 0.70), int(h * 0.86)), (w, h), 255, -1)
 
+        if img is not None:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+            bright = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
+            dark = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+            strokes = ((bright > 30) | (dark > 40)).astype(np.uint8) * 255
+            strokes = cv2.dilate(strokes, np.ones((3, 3), np.uint8))
+            mask = cv2.bitwise_and(mask, strokes)
         return mask
+
+    def _restore_mask(self, img: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        result = cv2.inpaint(img, mask, 3, cv2.INPAINT_TELEA)
+        # Large opaque stamps need texture: Telea alone produces a smooth smear.
+        # Match nearby intact patches by the border around the damaged region.
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        h, w = mask.shape
+        for contour in contours:
+            x, y, bw, bh = cv2.boundingRect(contour)
+            if bw * bh < 600 or cv2.countNonZero(mask[y:y+bh, x:x+bw]) < bw * bh * .75:
+                continue
+            pad = 5
+            x1, y1 = max(0, x-pad), max(0, y-pad)
+            x2, y2 = min(w, x+bw+pad), min(h, y+bh+pad)
+            target = img[y1:y2, x1:x2].astype(np.float32)
+            local_mask = mask[y1:y2, x1:x2]
+            border = local_mask == 0
+            if border.sum() < 20:
+                continue
+            ph, pw = local_mask.shape
+            best, best_patch = float('inf'), None
+            step = max(4, min(bw, bh)//6)
+            for cy in range(max(0, y1-bh*2), min(h-ph, y1+bh*2)+1, step):
+                for cx in range(max(0, x1-bw), min(w-pw, x1+bw)+1, step):
+                    if np.any(mask[cy:cy+ph, cx:cx+pw]):
+                        continue
+                    patch = img[cy:cy+ph, cx:cx+pw]
+                    error = np.mean((patch.astype(np.float32)[border] - target[border])**2)
+                    if error < best:
+                        best, best_patch = error, patch
+            # If surroundings do not match, avoid copying a different object.
+            if best_patch is not None and best < 450:
+                roi = result[y1:y2, x1:x2]
+                weight = np.clip(cv2.distanceTransform(local_mask, cv2.DIST_L2, 3) / 10.0, 0, 1)[..., None]
+                blended = roi.astype(np.float32) * (1-weight) + best_patch.astype(np.float32) * weight
+                roi[local_mask != 0] = blended.astype(np.uint8)[local_mask != 0]
+        return result
 
     def inpaint_watermark(self, image_path: str, position: str = "auto") -> Optional[str]:
         """
         Затирает водяной знак алгоритмом Inpainting (Telea).
-        Мгновенно (0.03 - 0.05 сек), 100% сохранение текстуры и фона.
+        Сохраняет размеры; восстанавливает фон только внутри маски.
         """
         if not os.path.exists(image_path):
             return None
@@ -185,13 +197,13 @@ class WatermarkCleaner:
             mask = self._get_mask_for_position(w, h, position=position, img=img)
 
             # Inpaint Telea
-            inpainted = cv2.inpaint(img, mask, 5, cv2.INPAINT_TELEA)
+            inpainted = self._restore_mask(img, mask)
 
-            out_filename = f"cleaned_{int(time.time() * 1000)}.jpg"
+            out_filename = f"cleaned_{uuid.uuid4().hex}.png"
             out_path = os.path.join(self.output_dir, out_filename)
 
             # Сохраняем в высоком качестве JPEG 96
-            _, buf = cv2.imencode(".jpg", inpainted, [int(cv2.IMWRITE_JPEG_QUALITY), 96])
+            _, buf = cv2.imencode(".png", inpainted)
             with open(out_path, "wb") as f_out:
                 f_out.write(buf)
 
@@ -300,7 +312,7 @@ class WatermarkCleaner:
                 )
 
                 combined = Image.alpha_composite(img, overlay).convert("RGB")
-                out_filename = f"branded_{int(time.time() * 1000)}.jpg"
+                out_filename = f"branded_{uuid.uuid4().hex}.jpg"
                 out_path = os.path.join(self.output_dir, out_filename)
                 combined.save(out_path, format="JPEG", quality=96, optimize=True)
 
@@ -319,7 +331,7 @@ class WatermarkCleaner:
     ) -> str:
         """
         Единая точка очистки:
-        - 'inpaint': затирает водяной знак нейро-ластиком
+        - 'inpaint': затирает водяной знак локальным алгоритмом восстановления
         - 'badge': накладывает фирменный шильдик поверх
         - 'hybrid' (рекомендуется): затирает чужой логотип + ставит стильный бейдж твоего магазина
         - 'crop': срезает нижние 6% картинки
@@ -331,7 +343,7 @@ class WatermarkCleaner:
         if (mode in ("hybrid", "badge")) and (not brand_text or not brand_text.strip()):
             mode = "inpaint"
 
-        if mode == "inpaint":
+        if mode in ("inpaint", "clean"):
             res = self.inpaint_watermark(image_path, position=position)
             return res or image_path
 
@@ -375,7 +387,7 @@ class WatermarkCleaner:
     ) -> list:
         """
         Очищает все фото поста от чужих водяных знаков.
-        Работает за доли секунды и сохраняет 100% оригинального качества донора.
+        Оригиналы не изменяются. Качество восстановления зависит от фона под знаком.
         """
         if not media_files:
             return media_files
@@ -386,7 +398,7 @@ class WatermarkCleaner:
         for fpath in media_files:
             if isinstance(fpath, str) and fpath.lower().endswith(image_exts) and os.path.exists(fpath):
                 try:
-                    cleaned = self.clean_image(fpath, mode=mode, brand_text=brand_text, position=position)
+                    cleaned = await asyncio.to_thread(self.clean_image, fpath, mode=mode, brand_text=brand_text, position=position)
                     cleaned_files.append(cleaned)
                 except Exception as e:
                     logger.warning(f"[WatermarkCleaner] Failed to clean {fpath}: {e}")

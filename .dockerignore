@@ -11,3 +11,11 @@ temp_media
 __pycache__
 *.pyc
 .env
+user_session.json
+*.db-wal
+*.db-shm
+backups
+private_image_previews
+.env.*
+*.txt
+!requirements.txt

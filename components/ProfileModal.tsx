@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { AppConfig } from '../types';
-import { X, Eye, EyeOff, Copy, Check, Clock, Calendar, ShieldCheck, Zap, Sparkles, Smartphone, KeyRound, Wifi, CheckCircle2, Save } from 'lucide-react';
+import { X, Eye, EyeOff, Copy, Check, Clock, ShieldCheck, Sparkles, Smartphone, CheckCircle2, Save } from 'lucide-react';
 import { getActionHistory } from '../services/actionHistory';
 import { apiService } from '../services/apiService';
+import { ImageProviderSettingsPanel } from './ImageProviderSettingsPanel';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -16,18 +17,21 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, con
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // PIN code management for Mobile Quick Login
-  const [pinCode, setPinCode] = useState('1234');
+  const [pinCode, setPinCode] = useState('');
+  const [pinConfigured, setPinConfigured] = useState(false);
   const [isSavingPin, setIsSavingPin] = useState(false);
   const [pinSavedMsg, setPinSavedMsg] = useState(false);
 
   useEffect(() => {
+    let active = true;
     if (isOpen) {
+      setPinCode('');
+      setPinSavedMsg(false);
       apiService.getUserPin()
-        .then(res => {
-          if (res?.pin_code) setPinCode(res.pin_code);
-        })
-        .catch(() => {});
+        .then(res => { if (active) setPinConfigured(res.pin_configured); })
+        .catch(() => { if (active) setPinConfigured(false); });
     }
+    return () => { active = false; };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -54,6 +58,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, con
     setIsSavingPin(true);
     try {
       await apiService.updateUserPin(pinCode);
+      setPinConfigured(true);
+      setPinCode('');
       setPinSavedMsg(true);
       setTimeout(() => setPinSavedMsg(false), 2500);
     } catch (e: any) {
@@ -121,6 +127,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, con
         </div>
 
         <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20, maxHeight: '80vh', overflowY: 'auto' }}>
+          <ImageProviderSettingsPanel onSaved={() => window.dispatchEvent(new Event('product-image-settings-updated'))} />
           
           {/* SUBSCRIPTION COUNTDOWN WIDGET */}
           <div style={{
@@ -212,13 +219,17 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, con
             {/* PIN Code Setup */}
             <div>
               <label style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', display: 'block', marginBottom: 4 }}>
-                🔑 Ваш секретный PIN-код (для входа без SMS):
+                {pinConfigured ? '🔑 PIN настроен. Введите новый для смены:' : '🔑 Задайте PIN для быстрого входа:'}
               </label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
-                  type="text"
+                  type="password"
+                  aria-label="Новый PIN для быстрого входа"
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  placeholder="4–12 цифр, кроме 1234"
                   value={pinCode}
-                  maxLength={10}
+                  maxLength={12}
                   onChange={(e) => setPinCode(e.target.value)}
                   style={{
                     flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.1)',
@@ -228,7 +239,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, con
                 />
                 <button
                   onClick={handleSavePin}
-                  disabled={isSavingPin}
+                  disabled={isSavingPin || !/^[0-9]{4,12}$/.test(pinCode) || pinCode === "1234"}
                   style={{
                     background: 'linear-gradient(135deg, #e63946, #c0392b)', border: 'none',
                     borderRadius: 10, padding: '0 16px', color: '#fff', cursor: 'pointer',

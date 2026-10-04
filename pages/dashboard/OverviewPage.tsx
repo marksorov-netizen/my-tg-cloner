@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppConfig, SystemStats } from '../../types';
-import { Zap, Activity, AlertTriangle, Layers, ShoppingBag, Sparkles, ArrowRight, Play, CheckCircle2, Square } from 'lucide-react';
+import { Zap, Activity, AlertTriangle, Layers, ArrowRight, Play, Square } from 'lucide-react';
 import { ActionHistoryPanel } from '../../components/ActionHistoryPanel';
 import { getActionHistory } from '../../services/actionHistory';
 import { loadUserSavedConfig } from '../../services/userConfig';

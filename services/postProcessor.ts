@@ -209,7 +209,7 @@ export const sanitizeDonorContent = (text: string, allowedBotUsername?: string):
     }
 
     // 5. Очистка Markdown-ссылок
-    let lineClean = line.replace(/\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g, (match, linkText, url) => {
+    let lineClean = line.replace(/\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g, (match, _linkText, url) => {
       if (botClean && url.toLowerCase().includes(botClean)) {
         return match;
       }

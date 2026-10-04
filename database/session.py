@@ -75,9 +75,15 @@ async def init_db():
     """Создаёт все таблицы и автоматически добавляет отсутствующие колонки при обновлении."""
     from .models import Base
     from sqlalchemy import text
+    from .migrations import backup_sqlite_before_upgrade, upgrade_auth_orders
+    import asyncio
+
+    if engine.url.get_backend_name() == "sqlite":
+        await asyncio.to_thread(backup_sqlite_before_upgrade, engine.url.database)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(upgrade_auth_orders)
         is_pg = "postgres" in str(engine.url)
         if is_pg:
             for col, tbl, col_type in [
@@ -88,7 +94,7 @@ async def init_db():
                 ("vton_enabled", "projects", "BOOLEAN DEFAULT FALSE"),
                 ("created_at", "orders", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
                 ("updated_at", "orders", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
-                ("pin_code", "users", "TEXT DEFAULT '1234'"),
+                ("pin_code", "users", "TEXT"),
             ]:
                 try:
                     await conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} {col_type};"))
@@ -103,7 +109,7 @@ async def init_db():
                 "ALTER TABLE projects ADD COLUMN vton_enabled BOOLEAN DEFAULT 0;",
                 "ALTER TABLE orders ADD COLUMN created_at DATETIME;",
                 "ALTER TABLE orders ADD COLUMN updated_at DATETIME;",
-                "ALTER TABLE users ADD COLUMN pin_code TEXT DEFAULT '1234';",
+                "ALTER TABLE users ADD COLUMN pin_code TEXT;",
             ]:
                 try:
                     await conn.execute(text(alter_sql))

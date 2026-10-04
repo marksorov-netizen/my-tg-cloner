@@ -31,6 +31,7 @@ import sys
 import subprocess
 import shutil
 import uuid
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional, Literal, List
 
@@ -57,6 +58,7 @@ from database.session import init_db, get_db, get_system_user_id
 from database.models import Project, Donor, ProjectDonor, Post, User, ArticleItem, OrderBotConfig, Order, ParsedPostItem
 from core.ai_rewriter import call_gemini_with_retry, AIRewriteError
 from core.auth import get_current_user, create_access_token, COOKIE_NAME, COOKIE_MAX_AGE
+from core.pin_auth import normalize_phone, validate_pin, hash_pin, verify_pin
 
 load_dotenv()
 
@@ -67,8 +69,14 @@ logging.basicConfig(
 logger = logging.getLogger("server")
 
 # ---------- Конфигурация CORS ----------
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
-ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS", 
+    "https://branchbistro.ru,http://localhost:3000,http://localhost:5173"
+)
+ALLOWED_ORIGINS = [
+    o.strip() for o in _raw_origins.split(",") 
+    if o.strip() and o.strip() != "*"
+]
 logger.info(f"CORS allowed origins: {ALLOWED_ORIGINS}")
 
 def get_default_ai_key() -> str:
@@ -98,7 +106,10 @@ async def lifespan(app: FastAPI):
 
     # Авто-старт бота заказов если токен настроен
     try:
-        start_order_bot_subprocess()
+        if os.getenv("ORDER_BOT_AUTOSTART", "true").lower() == "true":
+            start_order_bot_subprocess()
+        else:
+            logger.info("[OrderBot] Automatic start disabled for this process.")
     except Exception as ob_err:
         logger.warning(f"Could not auto-start order bot: {ob_err}")
 
@@ -116,14 +127,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MyBotAi11 API", version="0.2.0", lifespan=lifespan)
+from core.product_images import router as product_images_router
+app.include_router(product_images_router)
+from core.product_parser import router as product_parser_router
+app.include_router(product_parser_router)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"^https?://.*$",
-    allow_credentials=True,                                         # обязательно для cookies
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
 )
 
 os.makedirs("temp_media", exist_ok=True)
@@ -143,6 +157,7 @@ _RATE_BUCKETS: dict[str, _collections.deque] = {}
 _RATE_LIMITS = {
     # endpoint -> (max_requests, window_seconds)
     "/auth/request_code": (3, 3600),   # 3 SMS в час с одного IP
+    "/auth/quick_login": (5, 300),
     "/auth/login": (10, 3600),         # 10 попыток входа в час
     "/batch/fetch": (30, 300),         # 30 чтений канала за 5 минут
     "/batch/send": (20, 300),          # 20 публикаций за 5 минут
@@ -152,23 +167,25 @@ _RATE_LIMITS = {
 def _client_ip(request) -> str:
     """IP клиента с учётом обратного прокси (nginx и т.п.)."""
     fwd = request.headers.get("x-forwarded-for")
-    if fwd:
+    if fwd and os.getenv("TRUST_PROXY_HEADERS", "false").lower() == "true":
         return fwd.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
 
-def check_rate_limit(request, bucket_key: Optional[str] = None) -> Optional[int]:
+def check_rate_limit(request, bucket_key: Optional[str] = None, identity: Optional[str] = None) -> Optional[int]:
     """
     Возвращает retry_after в секундах, если лимит превышен, иначе None.
     bucket_key по умолчанию — путь эндпоинта.
     """
+    if request is None:
+        return None  # Trusted internal background calls have no HTTP client request.
     key = bucket_key or request.url.path
     limit_cfg = _RATE_LIMITS.get(key.rstrip("/"))
     if not limit_cfg:
         return None
     max_req, window = limit_cfg
 
-    bucket_key_full = f"{key}:{_client_ip(request)}"
+    bucket_key_full = f"{key}:{identity or _client_ip(request)}"
     now = _time.monotonic()
     bucket = _RATE_BUCKETS.setdefault(bucket_key_full, _collections.deque())
 
@@ -207,7 +224,7 @@ class LoginRequest(BaseModel):
 
 class QuickLoginRequest(BaseModel):
     phone: str
-    pin: Optional[str] = "1234"
+    pin: str
 
 
 class FetchRequest(BaseModel):
@@ -446,6 +463,8 @@ async def login(req: LoginRequest, response: Response, request: Request):
             tg_api_id=me_info.get("api_id"),
             tg_api_hash=me_info.get("api_hash"),
         )
+        if not db_user.is_active:
+            raise HTTPException(401, "Пользователь деактивирован")
 
         # Выдаём JWT в httpOnly cookie — JS не имеет к нему доступа
         # COOKIE_SECURE=true в проде за HTTPS, иначе браузер не примет cookie по http
@@ -476,6 +495,8 @@ async def login(req: LoginRequest, response: Response, request: Request):
             "subscription_tier": db_user.subscription_tier,
             "is_admin": db_user.is_admin,
         }
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -484,124 +505,85 @@ async def login(req: LoginRequest, response: Response, request: Request):
 
 
 @app.post("/auth/quick_login")
-async def quick_login(req: QuickLoginRequest, response: Response):
-    """
-    Быстрый вход с телефона или другого устройства по номеру телефона и PIN-коду.
-    Не требует Telegram API ID, API Hash или получения SMS-кода, если аккаунт уже настроен.
-    """
-    phone_clean = req.phone.strip()
-    digits = "".join(filter(str.isdigit, phone_clean))
+async def quick_login(req: QuickLoginRequest, response: Response, request: Request):
+    retry = check_rate_limit(request)
+    if retry:
+        raise HTTPException(429, "Слишком много попыток входа", headers={"Retry-After": str(retry)})
+    try:
+        digits = normalize_phone(req.phone)
+    except ValueError:
+        raise HTTPException(401, "Неверный номер телефона или PIN-код")
+    retry = check_rate_limit(request, identity=f"phone:{digits}")
+    if retry:
+        raise HTTPException(429, "Слишком много попыток входа", headers={"Retry-After": str(retry)})
 
     from database.session import async_session
-    from database.models import User
-    from sqlalchemy import select, or_
-
+    from sqlalchemy import or_
     async with async_session() as session:
-        # Ищем пользователя по номеру телефона
-        res = await session.execute(
-            select(User).where(
-                or_(
-                    User.phone_number == phone_clean,
-                    User.phone_number == f"+{digits}",
-                    User.phone_number == digits
-                )
-            )
-        )
-        user = res.scalar_one_or_none()
-
-        # Если пользователь не найден в БД, но есть локальный user_session.json — подтягиваем его
-        if not user:
-            session_file = os.path.join(os.getcwd(), "user_session.json")
-            if os.path.exists(session_file):
-                try:
-                    import json
-                    with open(session_file, "r", encoding="utf-8") as sf:
-                        sdata = json.load(sf)
-                        sphone = sdata.get("phone", "")
-                        sdigits = "".join(filter(str.isdigit, sphone))
-                        if digits == sdigits or not digits:
-                            from database.session import get_or_create_user
-                            user = await get_or_create_user(
-                                phone_number=sphone,
-                                tg_session_string=sdata.get("session"),
-                                tg_api_id=sdata.get("api_id"),
-                                tg_api_hash=sdata.get("api_hash")
-                            )
-                except Exception as e:
-                    logger.warning(f"Could not load user_session.json for quick login: {e}")
-
-        if not user:
-            res_first = await session.execute(select(User).where(User.is_active == True).limit(1))
-            first_user = res_first.scalar_one_or_none()
-            if first_user and (not digits or digits in "".join(filter(str.isdigit, first_user.phone_number or ""))):
-                user = first_user
-
-        if not user:
-            raise HTTPException(
-                status_code=404,
-                detail="Пользователь с таким номером не найден. Подключите аккаунт через кнопку «Подключение Telegram»."
-            )
-
-        # Проверка PIN-кода (по умолчанию 1234 или из БД)
-        expected_pin = getattr(user, "pin_code", None) or "1234"
-        provided_pin = (req.pin or "").strip()
-        if provided_pin != expected_pin and provided_pin != "1234":
-            raise HTTPException(status_code=401, detail="Неверный PIN-код для входа")
-
-        # Выдаем 30-дневный JWT
+        result = await session.execute(select(User).where(or_(
+            User.phone_number == req.phone.strip(),
+            User.phone_number == f"+{digits}",
+            User.phone_number == digits,
+        )))
+        matches = result.scalars().all()
+        user = matches[0] if len(matches) == 1 else None
+        if not user or not user.is_active or not await asyncio.to_thread(verify_pin, req.pin, user.pin_hash):
+            raise HTTPException(401, "Неверный номер телефона или PIN-код")
+        from datetime import datetime
+        user.last_login_at = datetime.utcnow()
+        await session.commit()
         token = create_access_token(user.id, user.phone_number)
         response.set_cookie(
-            key=COOKIE_NAME,
-            value=token,
-            httponly=True,
-            samesite="lax",
+            key=COOKIE_NAME, value=token, httponly=True, samesite="lax",
             max_age=COOKIE_MAX_AGE,
             secure=os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
         )
-
         return {
-            "status": "authenticated",
-            "token": token,
+            "status": "authenticated", "token": token,
             "user": user.username or user.full_name or user.phone_number,
-            "phone": user.phone_number,
-            "user_id": user.id,
-            "subscription_tier": user.subscription_tier,
-            "is_admin": user.is_admin,
-            "pin_code": expected_pin
+            "phone": user.phone_number, "user_id": user.id,
+            "subscription_tier": user.subscription_tier, "is_admin": user.is_admin,
         }
 
 
 @app.get("/api/user/pin")
 async def get_user_pin(current_user: User = Depends(get_current_user)):
-    """Возвращает текущий PIN-код пользователя для входа с мобильного телефона."""
-    return {"pin_code": getattr(current_user, "pin_code", "1234") or "1234"}
+    return {"pin_configured": bool(current_user.pin_hash)}
 
 
 @app.post("/api/user/pin")
 async def set_user_pin(data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Устанавливает новый PIN-код пользователя для быстрого входа."""
-    new_pin = (data.get("pin_code") or "").strip()
-    if not new_pin or len(new_pin) < 4:
-        raise HTTPException(status_code=400, detail="PIN-код должен содержать минимум 4 символа")
-    current_user.pin_code = new_pin
+    try:
+        new_pin = validate_pin(str(data.get("pin_code") or "").strip())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    # get_current_user returns a detached ORM instance: load the row in this session.
+    user = await db.get(User, current_user.id)
+    if not user or not user.is_active:
+        raise HTTPException(401, "Пользователь не найден или деактивирован")
+    user.pin_hash = await asyncio.to_thread(hash_pin, new_pin)
+    user.pin_code = None
     await db.commit()
-    logger.info(f"User {current_user.phone_number} updated PIN code")
-    return {"status": "ok", "pin_code": new_pin}
+    return {"status": "ok", "pin_configured": True}
 
 
 # ── СИНХРОНИЗАЦИЯ ЗАДАЧ МЕЖДУ ПК И ТЕЛЕФОНОМ ──────────────────────
-from core.task_manager import task_manager
+from core.task_manager import task_managers
 
 @app.get("/api/tasks/status")
 async def get_tasks_status(current_user: User = Depends(get_current_user)):
     """Получает статус текущей активной задачи парсинга (для телефона и ПК)."""
-    return task_manager.get_state()
+    return task_managers.for_user(current_user.id).get_state()
 
 
 @app.post("/api/tasks/start")
 async def start_tasks(data: dict = None, current_user: User = Depends(get_current_user)):
     """Сбрасывает флаг остановки и переводит менеджер задач в активное состояние."""
+    from core.product_parser import workers
+    if str(current_user.id) in workers:
+        raise HTTPException(409, "Сначала остановите или дождитесь фонового переноса фото.")
     payload = data or {}
+    task_manager = task_managers.for_user(current_user.id)
     task_manager.start(
         module=payload.get("module", "store"),
         donor=payload.get("donor", ""),
@@ -615,15 +597,16 @@ async def start_tasks(data: dict = None, current_user: User = Depends(get_curren
 @app.post("/api/tasks/sync")
 async def sync_tasks_status(data: dict, current_user: User = Depends(get_current_user)):
     """Синхронизирует состояние выполнения задачи с сервером."""
-    if data.get("is_running"):
-        task_manager.reset_stop()
-    task_manager.update_state(data)
+    from core.product_parser import workers
+    if str(current_user.id) not in workers:
+        task_managers.for_user(current_user.id).update_state(data)
     return {"status": "synced"}
 
 
 @app.post("/api/tasks/stop")
 async def stop_tasks(current_user: User = Depends(get_current_user)):
     """Мгновенно останавливает активную задачу с любого устройства (ПК или телефон)."""
+    task_manager = task_managers.for_user(current_user.id)
     task_manager.stop()
     logger.info(f"[TaskManager] Task stopped by user {current_user.phone_number}")
     return {"status": "stopped", "state": task_manager.get_state()}
@@ -1420,7 +1403,7 @@ async def watermark_preview(
     logger.info(f"[Watermark Preview] Cleaning latest parsed image: {target_path}")
 
     from core.watermark_cleaner import watermark_cleaner
-    brand_name = req.brand_text or req.description or "НАШ МАГАЗИН"
+    brand_name = req.brand_text if req.brand_text is not None else req.description
     result = watermark_cleaner.clean_image(
         target_path,
         mode=req.mode or "hybrid",
@@ -1453,14 +1436,7 @@ async def get_cleaned_or_vton_result(filename: str):
     for d in search_dirs:
         p = os.path.join(d, safe_name)
         if os.path.exists(p):
-            return FileResponse(p, media_type="image/jpeg")
-
-    # Fallback to newest image in cleaned_results or vton_results
-    for d in search_dirs:
-        existing = glob.glob(os.path.join(d, "*.jpg"))
-        if existing:
-            existing.sort(key=os.path.getmtime, reverse=True)
-            return FileResponse(existing[0], media_type="image/jpeg")
+            return FileResponse(p)
 
     raise HTTPException(status_code=404, detail="Изображение не найдено")
 
@@ -3194,6 +3170,53 @@ async def _restart_listeners():
 # ============================================================
 # Точка входа
 # ============================================================
+
+async def fetch_product_parser_posts(donor, limit, user):
+    return await batch_fetch(FetchRequest(channel=donor, limit=limit), user, None)
+
+
+async def prepare_product_parser_post(req, post, donor, user):
+    from core.donor_sanitizer import sanitize_donor_text
+    from core.product_pricing import prices
+    from database.session import async_session
+    calculated = prices(post["text"], req) if req.module == "store" else {}
+    original = sanitize_donor_text(post["text"])
+    text = original
+    if req.prompt.strip():
+        async with async_session() as db:
+            result = await ai_rewrite(RewriteRequest(text=original, prompt=req.prompt +
+                                      ("\nНе указывай цены: рассчитанные цены добавит сервер." if calculated else ""),
+                                      mode="product" if req.module == "store" else "news"), db, user)
+            text = result["rewritten_text"]
+    if calculated:
+        import re
+        text = "\n".join(line for line in text.splitlines() if not re.search(
+            r"(?:цена|стоимость|опт|дроп|розница|₽|руб|\$|€)", line, re.I)).strip()
+        labels = {"retail": "🏷️ Цена" if req.price_mode == "single" else "🏷️ Розница", "wholesale": "📦 Опт", "drop": "🤝 Дроп"}
+        text += "\n\n" + "\n".join(f"{labels[key]}: {value} {req.currency}" for key, value in calculated.items())
+    article_id = None
+    if req.module == "store" and req.create_articles:
+        async with async_session() as db:
+            result = await create_article(ArticleCreateRequest(
+                title=text.splitlines()[0][:120], description=text, original_text=post["text"],
+                price=f"{calculated['retail']} {req.currency}" if calculated else None,
+                wholesale_price=f"{calculated['wholesale']} {req.currency}" if "wholesale" in calculated else None,
+                drop_price=f"{calculated['drop']} {req.currency}" if "drop" in calculated else None,
+                currency=req.currency, source_channel=donor, target_channel=req.targets[0],
+                source_msg_id=post["id"], article_prefix=req.article_prefix), db, user)
+            article_id = result["article_id"]
+            text += f"\n\n🏷️ Артикул: {result['article_code']}"
+            bot_config = (await db.execute(select(OrderBotConfig).limit(1))).scalar_one_or_none()
+            if bot_config and bot_config.bot_username:
+                text += f"\n👉 [🛒 Заказать](https://t.me/{bot_config.bot_username.lstrip('@')}?start={result['article_code']})"
+    if not text.strip():
+        raise ValueError("После очистки описание пустое. Товар не опубликован.")
+    return text, article_id
+
+
+from core.product_parser import configure as configure_product_parser
+configure_product_parser(fetch_product_parser_posts, prepare_product_parser_post, clean_channel_identifier)
+
 
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")

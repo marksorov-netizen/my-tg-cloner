@@ -14,9 +14,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
   // Quick Login State (Phone + PIN)
   const [quickPhone, setQuickPhone] = useState(
-    localStorage.getItem('gp_phone') || '+79998558576'
+    localStorage.getItem('gp_phone') || ''
   );
-  const [quickPin, setQuickPin] = useState('1234');
+  const [quickPin, setQuickPin] = useState('');
 
   // Full Telegram Login State (API ID + Hash + SMS)
   const [step, setStep] = useState<'CREDENTIALS' | 'CODE'>('CREDENTIALS');
@@ -312,15 +312,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   <label style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)' }}>
                     PIN-код безопасности
                   </label>
-                  <span style={{ fontSize: 11, color: '#f4a623' }}>По умолчанию: 1234</span>
+                  <span style={{ fontSize: 11, color: '#f4a623' }}>Задаётся в профиле после входа через Telegram</span>
                 </div>
                 <div style={{ position: 'relative' }}>
                   <input
                     type="password"
-                    maxLength={10}
+                    maxLength={12}
                     value={quickPin}
                     onChange={e => setQuickPin(e.target.value)}
-                    placeholder="1234"
+                    placeholder="Ваш PIN"
                     required
                     style={{
                       width: '100%', background: 'rgba(0,0,0,0.4)',

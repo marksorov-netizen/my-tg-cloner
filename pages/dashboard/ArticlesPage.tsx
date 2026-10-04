@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Package, ShoppingCart, Bot, Plus, Trash2, RefreshCw, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, Copy, CheckCircle, ExternalLink, AlertCircle, Loader2, Play, Square, Bell, Search, Image as ImageIcon, X } from 'lucide-react';
+import { Package, ShoppingCart, Bot, Plus, Trash2, RefreshCw, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, CheckCircle, ExternalLink, Loader2, Play, Square, Bell, Search, Image as ImageIcon, X } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────
 interface ArticleItem {

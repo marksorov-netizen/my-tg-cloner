@@ -4,6 +4,14 @@
 
 import { Project, ProjectCreatePayload, PostLog } from '../types';
 
+export interface ImageProviderSettings {
+  provider: 'openai' | 'zapro';
+  model: string;
+  key_configured: boolean;
+  enabled: boolean;
+  daily_limit: number;
+}
+
 // Пустой базовый URL → Vite proxy подхватывает в dev
 // В prod настрой nginx или укажи полный URL
 const API_URL = '';
@@ -18,7 +26,7 @@ async function apiFetch<T>(
 ): Promise<T> {
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string> || {}),
   };
@@ -68,6 +76,42 @@ export interface TelegramMessage {
 // ------------------------------------------------------------------
 export const apiService = {
 
+  productImageStatus: () => apiFetch<{ model: string; provider: 'openai' | 'zapro'; ready: boolean; remaining: number }>('/api/product-images/status'),
+  imageProviderSettings: () => apiFetch<ImageProviderSettings>('/api/product-images/settings'),
+  saveImageProviderSettings: (settings: Omit<ImageProviderSettings, 'model' | 'key_configured'> & { api_key?: string }) =>
+    apiFetch<ImageProviderSettings>('/api/product-images/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+  clearImageProviderSettings: () => apiFetch<ImageProviderSettings>('/api/product-images/settings', { method: 'DELETE' }),
+  checkImageProvider: () => apiFetch<{ available: boolean; message: string }>('/api/product-images/settings/check', { method: 'POST' }),
+
+  getProductParserModel: () => apiFetch<{configured: boolean; model_count: number; subject: string; scene: string}>('/api/product-images/parser/model'),
+  saveProductParserModel: (models: File[], subject: string, scene: string) => {
+    const body = new FormData();
+    models.forEach(file => body.append('models', file));
+    body.append('subject', subject); body.append('scene', scene);
+    return apiFetch<{configured: boolean; model_count: number; subject: string; scene: string}>('/api/product-images/parser/model', {method: 'PUT', body});
+  },
+  startProductParser: (data: Record<string, unknown>) => apiFetch<{job_id: string; status: string}>('/api/product-images/parser/start', {method: 'POST', body: JSON.stringify(data)}),
+  getProductParserStatus: () => apiFetch<{job_id?: string; status: string; message?: string; current?: number; total?: number; generated_files?: string[]; logs?: {text: string; status: string}[]}>('/api/product-images/parser/status'),
+  generateProductImages: (products: File[], avatar: File, scene: string, quality: 'medium' | 'high', requestId: string, subject = '') => {
+    const body = new FormData();
+    products.forEach(file => body.append('products', file));
+    body.append('avatar', avatar);
+    body.append('scene', scene);
+    body.append('quality', quality);
+    body.append('request_id', requestId);
+    body.append('subject', subject);
+    return apiFetch<{ model: string; status: string; results: { index: number; status: string; filename?: string; error?: string }[] }>('/api/product-images/preview', { method: 'POST', body });
+  },
+
+  productImageBlob: async (filename: string): Promise<Blob> => {
+    const token = localStorage.getItem('auth_token');
+    const response = await fetch(`/api/product-images/result/${encodeURIComponent(filename)}`, {
+      credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) throw new Error('Не удалось загрузить результат генерации.');
+    return response.blob();
+  },
+
   // ---------- Служебные ----------
 
   checkStatus: async (): Promise<{ status: string; user?: string }> => {
@@ -109,7 +153,7 @@ export const apiService = {
     try {
       await apiFetch('/auth/logout', { method: 'POST' });
     } catch { /* игнорируем ошибки разлогина */ }
-    try { localStorage.removeItem('ghostpost_auth'); } catch {}
+    try { localStorage.removeItem('ghostpost_auth'); localStorage.removeItem('auth_token'); } catch {}
   },
 
   /** Текущий пользователь (проверка JWT cookie). Бросает 401 если не авторизован. */
@@ -263,7 +307,7 @@ export const apiService = {
   // ---------- Быстрый вход с телефона & PIN ----------
 
   /** Быстрый вход по телефону и PIN-коду (без повторного ввода Telegram API/SMS) */
-  quickLogin: async (phone: string, pin: string = '1234'): Promise<{
+  quickLogin: async (phone: string, pin: string): Promise<{
     status: string;
     token: string;
     user: string;
@@ -271,7 +315,6 @@ export const apiService = {
     user_id: string;
     subscription_tier?: string;
     is_admin?: boolean;
-    pin_code?: string;
   }> => {
     return apiFetch('/auth/quick_login', {
       method: 'POST',
@@ -279,13 +322,13 @@ export const apiService = {
     });
   },
 
-  /** Получить текущий PIN-код пользователя */
-  getUserPin: async (): Promise<{ pin_code: string }> => {
+  /** Проверить, настроен ли PIN (сам PIN сервер не возвращает) */
+  getUserPin: async (): Promise<{ pin_configured: boolean }> => {
     return apiFetch('/api/user/pin');
   },
 
   /** Обновить PIN-код пользователя */
-  updateUserPin: async (pin_code: string): Promise<{ status: string; pin_code: string }> => {
+  updateUserPin: async (pin_code: string): Promise<{ status: string; pin_configured: boolean }> => {
     return apiFetch('/api/user/pin', {
       method: 'POST',
       body: JSON.stringify({ pin_code }),

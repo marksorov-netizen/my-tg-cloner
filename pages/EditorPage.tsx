@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AppConfig, ProcessedPost } from '../types';
 import { processSinglePost } from '../services/postProcessor';
+import { ProductImagePilot } from '../components/ProductImagePilot';
 import { ArrowRight, Play, Loader2, Sparkles, AlertCircle, Send, Edit3, Copy, Check } from 'lucide-react';
 
 interface EditorPageProps {
@@ -35,6 +36,8 @@ export const EditorPage: React.FC<EditorPageProps> = ({ config }) => {
   };
 
   return (
+    <div className="space-y-8">
+    <ProductImagePilot />
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[calc(100vh-180px)] min-h-[500px]">
       {/* Input Section */}
       <div className="flex flex-col bg-white rounded-3xl shadow-[0_10px_30px_-10px_rgba(0,0,0,0.05)] border border-slate-100 overflow-hidden group focus-within:ring-2 focus-within:ring-indigo-500/20 transition-all">
@@ -124,6 +127,7 @@ export const EditorPage: React.FC<EditorPageProps> = ({ config }) => {
         </div>
 
       </div>
+    </div>
     </div>
   );
 };

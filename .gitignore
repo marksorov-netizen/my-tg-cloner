@@ -60,4 +60,5 @@ __pycache__/
 temp_media/
 temp_media/*
 article_thumbs/
-
+backups/
+private_image_previews/

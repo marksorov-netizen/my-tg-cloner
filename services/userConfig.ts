@@ -6,6 +6,8 @@
  * Гарантирует, что при перезагрузке или возврате на сайт настройки НЕ СБРАСЫВАЮТСЯ.
  */
 
+import type { VideoProvider } from '../types';
+
 export interface UserSavedConfig {
   storeDonors: string[];
   storeTargets: string[];
@@ -24,9 +26,12 @@ export interface UserSavedConfig {
   intervalMinutes: number;
 
   enableVton: boolean;
+  brandBadgeText: string;
+  watermarkPosition: string;
+  articlePrefix: string;
   enableVideoGen: boolean;
   videoAspectRatio: '9:16' | '1:1';
-  videoProvider: 'builtin' | 'fashion_multicolor' | 'seedance' | 'replicate' | 'luma' | 'runway';
+  videoProvider: VideoProvider;
   // NOTE: videoApiKey специально НЕ хранится в localStorage ( persistent XSS = кража ключа ).
   // Только sessionStorage (чистится при закрытии вкладки) + память. См. get/setVideoApiKey ниже.
   videoApiKey: string;
@@ -72,6 +77,9 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
         intervalMinutes: parsed.intervalMinutes !== undefined ? parsed.intervalMinutes : 15,
 
         enableVton: parsed.enableVton !== undefined ? parsed.enableVton : false,
+        brandBadgeText: parsed.brandBadgeText ?? 'НАШ МАГАЗИН',
+        watermarkPosition: parsed.watermarkPosition ?? 'auto',
+        articlePrefix: parsed.articlePrefix ?? 'ART',
         enableVideoGen: parsed.enableVideoGen !== undefined ? parsed.enableVideoGen : false,
         videoAspectRatio: parsed.videoAspectRatio || '9:16',
         videoProvider: parsed.videoProvider || 'builtin',
@@ -98,6 +106,9 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
     intervalMinutes: 15,
 
     enableVton: false,
+    brandBadgeText: 'НАШ МАГАЗИН',
+    watermarkPosition: 'auto',
+    articlePrefix: 'ART',
     enableVideoGen: false,
     videoAspectRatio: '9:16',
     videoProvider: 'builtin',
@@ -109,10 +120,10 @@ export const loadUserSavedConfig = (): UserSavedConfig => {
 
 export const saveUserSavedConfig = (partial: Partial<UserSavedConfig>): void => {
   // videoApiKey никогда не пишем в localStorage — только в sessionStorage.
-  const { videoApiKey, ...rest } = partial as any;
+  const { videoApiKey, ...rest } = partial;
   if (videoApiKey !== undefined) setVideoApiKey(videoApiKey || '');
   const current = loadUserSavedConfig();
-  const { videoApiKey: _drop, ...currentSafe } = current as any;
+  const { videoApiKey: _drop, ...currentSafe } = current;
   const updated = { ...currentSafe, ...rest };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));

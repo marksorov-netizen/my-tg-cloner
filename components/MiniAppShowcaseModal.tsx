@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Smartphone, RefreshCw, Trash2, ExternalLink, ShoppingBag, CheckCircle, Sparkles, X, Share2 } from 'lucide-react';
+import { Smartphone, RefreshCw, Trash2, ShoppingBag, CheckCircle, Sparkles, X, Share2 } from 'lucide-react';
 
 interface MiniAppPostItem {
   id: string;

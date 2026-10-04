@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
@@ -15,7 +15,7 @@ import { ArticlesPage } from './pages/dashboard/ArticlesPage';
 import { ConfigPage } from './pages/ConfigPage';
 import { EditorPage } from './pages/EditorPage';
 import { AppConfig, SourceType, SystemStats } from './types';
-import { processSinglePost } from './services/postProcessor';
+
 
 const INITIAL_CONFIG: AppConfig = {
   sourceType: SourceType.TELEGRAM,

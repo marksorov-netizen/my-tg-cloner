@@ -35,7 +35,7 @@ const apiProxy = {
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react({ fastRefresh: false })],
+  plugins: [react()],
   resolve: {
     preserveSymlinks: true,
   },

@@ -1,12 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { AppConfig, Toast } from '../types';
+import React, { useState } from 'react';
+import { AppConfig, Toast, VideoProvider } from '../types';
 import { apiService } from '../services/apiService';
 import { loadUserSavedConfig, saveUserSavedConfig } from '../services/userConfig';
-import {
-  Save, AlertTriangle, CheckCircle,
-  Loader2, Key, Zap, Shield, Film, Eye,
-  Bot, Check, Sparkles
-} from 'lucide-react';
+import { Save, AlertTriangle, CheckCircle, Loader2, Key, Zap, Shield, Film, Eye, Bot, Check } from 'lucide-react';
 
 interface ConfigPageProps {
   config: AppConfig;
@@ -68,14 +64,14 @@ function DarkToggle({ checked, onChange }: { checked: boolean; onChange: (v: boo
   );
 }
 
-export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => {
-  const savedCfg = loadUserSavedConfig();
+export const ConfigPage: React.FC<ConfigPageProps> = () => {
+  const [savedCfg] = useState(loadUserSavedConfig);
 
   // 👗 Виртуальная примерка на фирменную модель (VTON)
   const [enableVton, setEnableVton] = useState<boolean>(savedCfg.enableVton || false);
 
   // 1. AI Видео-генерация & Нейросети (Fashion Multi-Color / Seedance / Replicate / Luma / Runway / Builtin)
-  const [videoProvider, setVideoProvider] = useState<'builtin' | 'fashion_multicolor' | 'seedance' | 'replicate' | 'luma' | 'runway'>(savedCfg.videoProvider || 'builtin');
+  const [videoProvider, setVideoProvider] = useState<VideoProvider>(savedCfg.videoProvider || 'builtin');
   const [videoApiKey, setVideoApiKey] = useState(savedCfg.videoApiKey || '');
   const [videoMotionStyle, setVideoMotionStyle] = useState<'trending_cinematic' | 'studio_rotation' | 'lifestyle_motion' | 'fast_reels'>(savedCfg.videoMotionStyle || 'trending_cinematic');
   const [videoAutoPrompt, setVideoAutoPrompt] = useState<boolean>(savedCfg.videoAutoPrompt !== undefined ? savedCfg.videoAutoPrompt : true);
@@ -283,7 +279,7 @@ export const ConfigPage: React.FC<ConfigPageProps> = ({ config, setConfig }) => 
             </label>
             <select
               value={videoProvider}
-              onChange={e => setVideoProvider(e.target.value as any)}
+              onChange={e => setVideoProvider(e.target.value as VideoProvider)}
               style={{
                 background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(230,57,70,0.4)',
                 borderRadius: 12, padding: '11px 14px', color: '#fff', fontSize: 13, fontWeight: 600, outline: 'none'

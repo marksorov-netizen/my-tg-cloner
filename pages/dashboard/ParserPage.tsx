@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AppConfig } from '../../types';
+import { AppConfig, VideoProvider } from '../../types';
 import { Plus, Trash2, Play, Square, Sparkles, Layers, Lock, Loader2, Radio, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { apiService } from '../../services/apiService';
@@ -7,6 +7,7 @@ import { processSinglePost } from '../../services/postProcessor';
 import { addActionLog } from '../../services/actionHistory';
 import { ActionHistoryPanel } from '../../components/ActionHistoryPanel';
 import { IntervalSelector } from '../../components/IntervalSelector';
+import { ProductParserSettings } from '../../components/ProductParserSettings';
 import { taskExecutionService, ActiveTaskState } from '../../services/taskExecutionService';
 
 import { loadUserSavedConfig, saveUserSavedConfig } from '../../services/userConfig';
@@ -16,12 +17,12 @@ interface ParserPageProps {
   setConfig: (c: AppConfig) => void;
 }
 
-export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => {
+export const ParserPage: React.FC<ParserPageProps> = ({ config }) => {
   const navigate = useNavigate();
   const isAuth = config.telegramAuth.step === 'AUTHENTICATED';
 
   // Saved user config from localStorage
-  const savedCfg = loadUserSavedConfig();
+  const [savedCfg] = useState(loadUserSavedConfig);
 
   // Global persistent state from taskExecutionService
   const [taskState, setTaskState] = useState<ActiveTaskState>(taskExecutionService.getParserState());
@@ -35,6 +36,8 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
   
   // Prompt settings
   const [promptText, setPromptText] = useState(savedCfg.parserPrompt);
+  const [enableProductModel, setEnableProductModel] = useState(false);
+  const [startingProductModel, setStartingProductModel] = useState(false);
   
   // Batch & Interval settings
   const [copyCount, setCopyCount] = useState<number>(savedCfg.copyCount || 100);
@@ -60,9 +63,9 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
       const activeDonor = (donors && donors.length > 0 ? donors[0] : newDonor || '').trim();
       const res = await apiService.cleanWatermarkPreview(
         'latest',
-        brandBadgeText || 'НАШ МАГАЗИН',
+        brandBadgeText.trim(),
         activeDonor || undefined,
-        'hybrid',
+        brandBadgeText.trim() ? 'hybrid' : 'clean',
         watermarkPosition || 'auto'
       );
       if (res && res.preview_url) {
@@ -81,9 +84,9 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
   // VIP AI Video Generation
   const [enableVideoGen, setEnableVideoGen] = useState<boolean>(savedCfg.enableVideoGen || false);
   const [videoAspectRatio, setVideoAspectRatio] = useState<'9:16' | '1:1'>(savedCfg.videoAspectRatio || '9:16');
-  const [videoProvider, setVideoProvider] = useState<'builtin' | 'seedance' | 'replicate' | 'luma' | 'runway'>(savedCfg.videoProvider || 'builtin');
-  const [videoApiKey, setVideoApiKey]     = useState<string>(savedCfg.videoApiKey || '');
-  const [videoMotionStyle, setVideoMotionStyle] = useState<'trending_cinematic' | 'studio_rotation' | 'lifestyle_motion' | 'fast_reels'>(savedCfg.videoMotionStyle || 'trending_cinematic');
+  const [videoProvider, setVideoProvider] = useState<VideoProvider>(savedCfg.videoProvider || 'builtin');
+  const [videoApiKey]     = useState<string>(savedCfg.videoApiKey || '');
+  const [videoMotionStyle] = useState<'trending_cinematic' | 'studio_rotation' | 'lifestyle_motion' | 'fast_reels'>(savedCfg.videoMotionStyle || 'trending_cinematic');
 
   // Cancel ref for instant loop termination
   const cancelRef = useRef(false);
@@ -188,8 +191,18 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
       return;
     }
 
+    if (enableProductModel) {
+      setStartingProductModel(true);
+      try {
+        await apiService.startProductParser({request_id: crypto.randomUUID(), module: 'parser', donors: donors.map(cleanChannel), targets: targetChannels.map(cleanChannel), limit: copyCount, interval_seconds: Math.round(intervalMinutes * 60), prompt: promptText, live_monitoring: enableLiveMonitoringAfterBatch});
+        taskExecutionService.followServerTask('parser', donors.map(cleanChannel), targetChannels.map(cleanChannel), copyCount);
+      } catch (exc) { alert(exc instanceof Error ? exc.message : 'Не удалось запустить фоновый парсинг.'); }
+      finally { setStartingProductModel(false); }
+      return;
+    }
     cancelRef.current = false;
-    taskExecutionService.startParserTask();
+    try { await taskExecutionService.startParserTask(); }
+    catch (exc) { alert(exc instanceof Error ? exc.message : 'Не удалось запустить парсинг.'); return; }
 
     const donorClean = cleanChannel(donors[0]);
     const targetCleanList = targetChannels.map(cleanChannel);
@@ -546,12 +559,13 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
                   }}
                   style={{ width: '100%', background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: 10, color: '#fff', fontSize: 14 }}
                 >
+                  <option value={1}>1 пост — пробный запуск</option>
                   <option value={5}>5 постов</option>
                   <option value={10}>10 постов</option>
                   <option value={20}>20 постов</option>
                   <option value={50}>50 постов</option>
                   <option value={100}>100 постов</option>
-                  <option value={200}>200 постов</option>
+                  <option value={200} disabled={enableProductModel}>200 постов</option>
                 </select>
               </div>
 
@@ -583,6 +597,8 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
             </div>
           </div>
 
+          <p style={{ color: "#94a3b8", fontSize: 13 }}>Используем фото донора. Генерация на модель отключена.</p>
+          <ProductParserSettings enabled={enableProductModel} disabled={true} onChange={value => { setEnableProductModel(value); localStorage.setItem('product-model-parser', String(value)); }} />
           {/* 🛡️ УМНАЯ ОЧИСТКА ВОДЯНЫХ ЗНАКОВ И БРЕНДИРОВАНИЕ (AI INPAINTING) */}
           <div style={{
             background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(0,0,0,0.6))',
@@ -600,7 +616,7 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
                       background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid #10b981',
                       fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 6
                     }}>
-                      100% КАЧЕСТВО • 0 ₽
+                      ИСХОДНОЕ РАЗРЕШЕНИЕ • 0 ₽
                     </span>
                   </div>
                   <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>
@@ -613,7 +629,7 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
                 color: '#fff', fontSize: 11, fontWeight: 900,
                 padding: '4px 10px', borderRadius: 8, letterSpacing: 0.5
               }}>
-                ⚡ 0.05 СЕК
+                ЛОКАЛЬНАЯ ОБРАБОТКА
               </span>
             </div>
 
@@ -636,7 +652,7 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
                     {enableVton ? '✅ Очистка водяных знаков и брендирование ВКЛЮЧЕНА' : '⚪ Включить очистку водяных знаков и брендирование'}
                   </span>
                   <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontWeight: 400, marginTop: 2 }}>
-                    Все фото товаров публикуются в кристальном 4K качестве оригинала, но с затертым водяным знаком донора и логотипом вашего магазина.
+                    Фото донора сохраняют исходные размеры. Проверьте очистку на предпросмотре; сложный фон под знаком может восстановиться неточно.
                   </div>
                 </div>
               </label>
@@ -737,7 +753,7 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
                     )}
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ fontSize: 11, color: '#10b981', marginBottom: 4, fontWeight: 700 }}>
-                        ✨ Очищенное фото (100% резкость + ваш бренд)
+                        ✨ Результат очистки
                       </div>
                       <img
                         src={vtonResultImg}
@@ -748,8 +764,8 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
                     <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', maxWidth: 360, lineHeight: 1.5 }}>
                       ✨ Водяной знак донора <strong>бесследно затерт</strong>.<br/>
                       ✨ Наложен стильный шильдик вашего бренда.<br/>
-                      ✨ Ткань, свет и четкость сохранены на <strong>100%</strong>!<br/>
-                      ✨ Скорость обработки: <strong>0.05 секунды</strong>.
+                      ✨ Оригинал сохранён; сравните детали товара до и после.<br/>
+                      ✨ Качество зависит от расположения знака и фона.
                     </div>
                   </div>
                 </div>
@@ -811,13 +827,14 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
                   <select
                     value={videoProvider}
                     onChange={e => {
-                      const val = e.target.value as any;
+                      const val = e.target.value as VideoProvider;
                       setVideoProvider(val);
                       saveUserSavedConfig({ videoProvider: val });
                     }}
                     style={{ flex: 1, minWidth: 200, background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '6px 12px', color: '#fff', fontSize: 12, outline: 'none' }}
                   >
                     <option value="builtin">⚡ Встроенный Turbo HD (0 ₽, моментально)</option>
+                    <option value="fashion_multicolor">👗 Fashion Мульти-цвет + AI Голос</option>
                     <option value="seedance">💃 Seedance AI API (ByteDance video)</option>
                     <option value="replicate">🤖 Replicate API (Kling AI / Wan2.1)</option>
                     <option value="luma">🎥 Luma Dream Machine API</option>
@@ -861,6 +878,7 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
             ) : (
               <button
                 onClick={handleStartParser}
+                disabled={startingProductModel}
                 style={{
                   width: '100%', padding: 14, borderRadius: 12,
                   background: 'linear-gradient(135deg, #e63946, #c0392b)',
@@ -869,7 +887,7 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config, setConfig }) => 
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
                 }}
               >
-                <Play size={18} /> Запустить на {targetChannels.length} {targetChannels.length === 1 ? 'канал' : 'канала'} ({copyCount} постов {enableLiveMonitoringAfterBatch ? '+ Мониторинг' : ''})
+                <Play size={18} /> Запустить на {targetChannels.length} {targetChannels.length === 1 ? 'канал' : 'канала'} ({copyCount} постов {enableProductModel ? '+ GPT Image 2 в фоне' : enableLiveMonitoringAfterBatch ? '+ Мониторинг' : ''})
               </button>
             )}
           </div>

@@ -79,12 +79,12 @@ class TaskExecutionService {
       countdownSec: 0,
       statusMessage: 'Запуск процесса...',
     });
-    apiService.startTask({
+    return apiService.startTask({
       module: 'store',
       donor: this.storeTask.donors[0] || '',
       targets: this.storeTask.targets,
       total: this.storeTask.total,
-    }).catch(() => {});
+    }).catch(error => { this.stopStore(true); throw error; });
   }
 
   public stopStore(remoteOnly: boolean = false) {
@@ -115,12 +115,20 @@ class TaskExecutionService {
       countdownSec: 0,
       statusMessage: 'Запуск процесса...',
     });
-    apiService.startTask({
+    return apiService.startTask({
       module: 'parser',
       donor: this.parserTask.donors[0] || '',
       targets: this.parserTask.targets,
       total: this.parserTask.total,
-    }).catch(() => {});
+    }).catch(error => { this.stopParser(true); throw error; });
+  }
+
+  public followServerTask(module: 'store' | 'parser', donors: string[], targets: string[], total: number) {
+    this.isMasterRunner = false;
+    this.taskStartedAt = Date.now();
+    const state = {isProcessing: true, isLiveMonitoring: false, donors, targets, total, current: 0, countdownSec: 0, statusMessage: 'Фоновая обработка на сервере…'};
+    if (module === 'store') { this.storeCancelled = false; this.updateStoreState(state); }
+    else { this.parserCancelled = false; this.updateParserState(state); }
   }
 
   public stopParser(remoteOnly: boolean = false) {
@@ -144,7 +152,7 @@ class TaskExecutionService {
   public updateStoreState(partial: Partial<ActiveTaskState>) {
     this.storeTask = { ...this.storeTask, ...partial };
     this.notify();
-    if (this.isMasterRunner && partial.isProcessing !== undefined || partial.current !== undefined) {
+    if (this.isMasterRunner && (partial.isProcessing !== undefined || partial.current !== undefined)) {
       this.syncWithServer('store');
     }
   }
@@ -152,7 +160,7 @@ class TaskExecutionService {
   public updateParserState(partial: Partial<ActiveTaskState>) {
     this.parserTask = { ...this.parserTask, ...partial };
     this.notify();
-    if (this.isMasterRunner && partial.isProcessing !== undefined || partial.current !== undefined) {
+    if (this.isMasterRunner && (partial.isProcessing !== undefined || partial.current !== undefined)) {
       this.syncWithServer('parser');
     }
   }
@@ -226,6 +234,10 @@ class TaskExecutionService {
                 statusMessage: '⏹ Остановлено удаленно через телефон'
               });
             }
+          }
+          if (!this.isMasterRunner) {
+            if (serverStatus.module === 'store' && this.storeTask.isProcessing) this.stopStore(true);
+            if (serverStatus.module === 'parser' && this.parserTask.isProcessing) this.stopParser(true);
           }
           return;
         }

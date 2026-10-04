@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AppConfig } from '../../types';
-import { Sparkles, Copy, Check, Play, RefreshCw, Wand2, BookOpen, Loader2 } from 'lucide-react';
-import { apiService } from '../../services/apiService';
+import { Copy, Check, Play, Wand2, BookOpen, Loader2 } from 'lucide-react';
+
 
 interface PromptPageProps {
   config: AppConfig;
@@ -31,7 +31,7 @@ const TEMPLATES = [
   }
 ];
 
-export const PromptPage: React.FC<PromptPageProps> = ({ config, setConfig }) => {
+export const PromptPage: React.FC<PromptPageProps> = () => {
   const [activePrompt, setActivePrompt] = useState(
     'Ты — профессиональный SMM-редактор Telegram-канала.\nТвоя задача — переписывать входящие новости интересно, с эмодзи и сохранением всех фактов.'
   );

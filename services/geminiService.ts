@@ -13,6 +13,8 @@
 // Пустая строка = относительный URL, Vite proxy направит на backend
 // В prod настройте nginx reverse proxy или используйте полный URL
 const BACKEND_URL = '';
+// Allow the backend quick retry cycle to finish while preventing infinite freezes.
+const REWRITE_TIMEOUT_MS = 20_000;
 
 export interface SmartPricePayload {
   mode?: 'single' | 'three_tier' | 'opt_retail';
@@ -21,12 +23,6 @@ export interface SmartPricePayload {
   retail: number;
   singlePrice?: number;
   symbol: string;
-}
-
-interface RewriteOptions {
-  text: string;
-  prices: SmartPricePayload | null;
-  removeLinks: boolean;
 }
 
 interface RewriteResult {
@@ -41,7 +37,7 @@ interface RewriteResult {
 export const rewriteContent = async (
   text: string,
   prices: SmartPricePayload | null,
-  removeLinks: boolean,
+  _removeLinks: boolean,
   customPrompt?: string
 ): Promise<string> => {
 
@@ -94,9 +90,9 @@ export const rewriteContent = async (
     return fallbackText;
   };
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REWRITE_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     const response = await fetch(`${BACKEND_URL}/api/ai/rewrite`, {
       method: 'POST',
@@ -110,7 +106,6 @@ export const rewriteContent = async (
         mode: isProduct ? 'product' : 'news',
       }),
     });
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
@@ -142,5 +137,7 @@ export const rewriteContent = async (
   } catch (error: any) {
     console.warn('[Gemini] AI Rewrite unavailable or timed out:', error?.message);
     return buildFallback();
+  } finally {
+    clearTimeout(timeoutId);
   }
 };

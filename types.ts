@@ -1,5 +1,7 @@
 // types.ts — TypeScript типы для MyBotAi11
 
+export type VideoProvider = 'builtin' | 'fashion_multicolor' | 'seedance' | 'replicate' | 'luma' | 'runway';
+
 export enum SourceType {
   TELEGRAM = 'TELEGRAM',
   WEBSITE = 'WEBSITE',

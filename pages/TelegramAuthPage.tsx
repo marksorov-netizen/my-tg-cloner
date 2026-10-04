@@ -2,7 +2,7 @@
 import React, { useEffect } from 'react';
 import { AppConfig, TelegramAuthState } from '../types';
 import { apiService } from '../services/apiService';
-import { Key, ShieldCheck, Smartphone, Send, Lock, Loader2, CheckCircle, AlertTriangle, ChevronRight, ServerOff } from 'lucide-react';
+import { Key, ShieldCheck, Smartphone, Lock, Loader2, CheckCircle, AlertTriangle, ChevronRight } from 'lucide-react';
 
 interface TelegramAuthPageProps {
   config: AppConfig;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Newspaper, ExternalLink, Trash2, RefreshCw, Search, Layers, Radio, Image as ImageIcon, CheckCircle, AlertCircle, ArrowUpRight, Copy, Check, Filter } from 'lucide-react';
+import { Newspaper, Trash2, RefreshCw, Search, Image as ImageIcon, CheckCircle, ArrowUpRight, Copy, Check, Filter } from 'lucide-react';
 import { apiService } from '../../services/apiService';
 
 interface ParsedPost {

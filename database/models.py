@@ -23,6 +23,35 @@ from sqlalchemy.orm import relationship, declarative_base
 Base = declarative_base()
 
 
+class ProductParserProfile(Base):
+    __tablename__ = "product_parser_profiles"
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    model_files = Column(JSON, nullable=False, default=list)
+    subject = Column(Text, nullable=False)
+    scene = Column(Text, nullable=False)
+
+
+class ProductParserJob(Base):
+    __tablename__ = "product_parser_jobs"
+    id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(String(30), nullable=False, default="running")
+    payload = Column(JSON, nullable=False)
+    progress = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UserImageSettings(Base):
+    """Personal image provider credentials; never returned to the browser."""
+    __tablename__ = "user_image_settings"
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    provider = Column(String(20), nullable=False, default="zapro")
+    key_encrypted = Column(Text, nullable=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    daily_limit = Column(Integer, nullable=False, default=5)
+
+
 def _uuid() -> str:
     """Генерирует UUID как строку — совместимо с SQLite и PostgreSQL."""
     return str(uuid.uuid4())
@@ -45,7 +74,8 @@ class User(Base):
     tg_api_id = Column(Integer, nullable=True)                        # api_id пользователя
     tg_api_hash_encrypted = Column(Text, nullable=True)               # api_hash
     tg_session_string = Column(Text, nullable=True)                   # StringSession
-    pin_code = Column(String(50), default="1234", nullable=True)     # PIN-код для быстрого входа с телефона
+    pin_code = Column(String(50), nullable=True)  # Legacy; cleared by migration
+    pin_hash = Column(Text, nullable=True)
 
     # Статистика
     total_posts_processed = Column(Integer, default=0)
@@ -302,6 +332,7 @@ class Order(Base):
     price_at_order = Column(String(100), nullable=True)             # Цена на момент заказа
     comment = Column(Text, nullable=True)
     supplier_message = Column(Text, nullable=True)                  # AI-сгенерированный текст для поставщика
+    status = Column(String(50), nullable=False, default="new", server_default="new")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     article = relationship("ArticleItem", back_populates="orders")

@@ -89,44 +89,9 @@ async def get_current_user(
         token = auth_header[7:].strip()
 
     if not token:
-        is_prod = os.getenv("ENVIRONMENT", "").lower() in ("prod", "production") or os.getenv("PROD", "").lower() in ("1", "true")
-        if is_prod:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Необходима авторизация (cookie или Bearer токен отсутствует)",
-            )
-
-        # Автоматическое восстановление сессии для локального использования:
-        from database.session import async_session
-        from database.models import User
-        from sqlalchemy import select
-        import json
-
-        session_file = os.path.join(os.getcwd(), "user_session.json")
-        target_phone = None
-        if os.path.exists(session_file):
-            try:
-                with open(session_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    target_phone = data.get("phone")
-            except Exception:
-                pass
-
-        async with async_session() as session:
-            user = None
-            if target_phone:
-                res = await session.execute(select(User).where(User.phone_number == target_phone))
-                user = res.scalar_one_or_none()
-            if not user:
-                res = await session.execute(select(User).where(User.is_active == True).limit(1))
-                user = res.scalar_one_or_none()
-
-            if user:
-                return user
-
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Необходима авторизация",
+            detail="Необходима авторизация (cookie или Bearer токен отсутствует)",
         )
 
     payload = _decode_token(token)

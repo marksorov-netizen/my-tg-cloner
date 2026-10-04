@@ -3,7 +3,7 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { LayoutDashboard, Layers, ShoppingBag, Wand2, ChevronRight, LogOut, Menu, X, User, Package, Newspaper, Settings } from 'lucide-react';
 
 import { ProfileModal } from './ProfileModal';
-import { AppConfig } from '../types';
+import { AppConfig, SourceType } from '../types';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -34,6 +34,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, isUserAuthenticated, c
     { path: '/dashboard/orders', label: '📦 4. Склад & Заказы', shortLabel: 'Склад', icon: Package },
     { path: '/dashboard/prompt', label: '✍️ 5. Промт-инжиниринг', shortLabel: 'Промты', icon: Wand2 },
     { path: '/dashboard/settings', label: '⚙️ 6. Настройки & AI Видео', shortLabel: 'Настройки', icon: Settings },
+    { path: '/dashboard/editor', label: '🖼 7. Фото по референсам', shortLabel: 'Фото', icon: Wand2 },
   ];
 
   const handleLogout = async () => {
@@ -229,13 +230,20 @@ export const Layout: React.FC<LayoutProps> = ({ children, isUserAuthenticated, c
           isOpen={isProfileModalOpen}
           onClose={() => setIsProfileModalOpen(false)}
           config={config || {
+            sourceType: SourceType.TELEGRAM,
+            telegramBotToken: '',
+            checkInterval: 60,
             destinationChannel: '@my_channel',
             sourceUrl: '',
             useAI: true,
             removeLinks: true,
             pricing: { wholesalePercent: 10, dropPercent: 30, retailPercent: 50, currencySymbol: '₽' },
             isSimulationMode: false,
-            telegramAuth: { step: isUserAuthenticated ? 'AUTHENTICATED' : 'IDLE', apiId: '28472910', apiHash: 'e89a7f3c1b4d092e6f51c82a39' }
+            telegramAuth: {
+              step: isUserAuthenticated ? 'AUTHENTICATED' : 'IDLE',
+              apiId: '', apiHash: '', phoneNumber: '', verificationCode: '',
+              isLoading: false, error: null
+            }
           }}
         />
 
