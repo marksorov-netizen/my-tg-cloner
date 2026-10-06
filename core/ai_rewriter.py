@@ -98,7 +98,8 @@ async def _call_openai_compatible_api(
         
         data = resp.json()
         try:
-            rewritten = data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            rewritten = msg.get("content") or msg.get("reasoning_content") or ""
             tokens_used = data.get("usage", {}).get("total_tokens", 0)
             return rewritten, tokens_used
         except (KeyError, IndexError, TypeError) as e:
@@ -163,6 +164,10 @@ async def call_gemini_with_retry(
     """
     Выполняет запрос к AI с авто-выбором провайдера (Zapro.su / OpenRouter / Groq / VseGPT / OpenAI / Gemini).
     """
+    tooken_key = os.getenv("TOOKEN_API_KEY", "").strip()
+    tooken_url = os.getenv("TOOKEN_BASE_URL", "https://tooken.club/v1").strip()
+    tooken_model = os.getenv("TOOKEN_MODEL", "deepseek-v4.1-flash").strip()
+
     zapro_key = os.getenv("ZAPRO_API_KEY", "").strip()
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -178,7 +183,9 @@ async def call_gemini_with_retry(
 
     if not resolved_key:
         pref = os.getenv("AI_PROVIDER", "").lower().strip()
-        if pref == "openrouter" and openrouter_key:
+        if pref == "tooken" and tooken_key:
+            resolved_key, provider, base_url = tooken_key, "tooken", tooken_url
+        elif pref == "openrouter" and openrouter_key:
             resolved_key, provider, base_url = openrouter_key, "openrouter", "https://openrouter.ai/api/v1"
         elif pref == "groq" and groq_key:
             resolved_key, provider, base_url = groq_key, "groq", "https://api.groq.com/openai/v1"
@@ -190,6 +197,8 @@ async def call_gemini_with_retry(
             resolved_key, provider, base_url = zapro_key, "zapro", zapro_url
         elif pref == "openai" and openai_key:
             resolved_key, provider, base_url = openai_key, "openai", "https://api.openai.com/v1"
+        elif tooken_key:
+            resolved_key, provider, base_url = tooken_key, "tooken", tooken_url
         elif zapro_key:
             resolved_key, provider, base_url = zapro_key, "zapro", zapro_url
         elif openrouter_key:
@@ -201,11 +210,16 @@ async def call_gemini_with_retry(
         elif openai_key:
             resolved_key, provider, base_url = openai_key, "openai", "https://api.openai.com/v1"
 
+    if resolved_key:
+        if resolved_key.startswith("tc_live_"):
+            provider, base_url = "tooken", tooken_url
+
     if not resolved_key:
         raise ValueError("AI_API_KEY_MISSING")
 
     is_openai_compatible = (
-        provider in ("zapro", "openai", "openrouter", "groq", "vsegpt") or
+        provider in ("tooken", "zapro", "openai", "openrouter", "groq", "vsegpt") or
+        resolved_key.startswith("tc_live_") or
         resolved_key.startswith("zp-") or
         resolved_key.startswith("sk-") or
         resolved_key.startswith("gsk_")
@@ -215,7 +229,13 @@ async def call_gemini_with_retry(
         max_attempts = len(RETRY_DELAYS) + 1
         last_exception = None
 
-        if provider == "groq":
+        if provider == "tooken":
+            candidate_models = [
+                tooken_model or "deepseek-v4.1-flash",
+                "deepseek-v4-flash",
+                "glm-5.3-flash"
+            ]
+        elif provider == "groq":
             candidate_models = ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"]
         elif provider == "openrouter":
             candidate_models = ["google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"]
