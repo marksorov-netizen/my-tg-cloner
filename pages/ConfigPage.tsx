@@ -80,7 +80,7 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
 
   // 2. AI Текстовый рерайт (Подписка платформы / Личный Gemini / Личный OpenRouter)
   // ВАЖНО: личный ключ держим только в памяти (useState), НЕ сохраняем в localStorage.
-  const [textAiProvider, setTextAiProvider] = useState<'platform' | 'own_gemini' | 'own_openrouter'>(
+  const [textAiProvider, setTextAiProvider] = useState<'platform' | 'own_tooken' | 'own_gemini' | 'own_openrouter'>(
     (localStorage.getItem('ghostpost_text_ai_provider') as any) || 'platform'
   );
   const [textAiKey, setTextAiKey] = useState('');
@@ -445,6 +445,7 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
               }}
             >
               <option value="platform" style={{ background: '#111' }}>💎 Платформа GhostPost (входит в тариф — готовые ключи платформы)</option>
+              <option value="own_tooken" style={{ background: '#111' }}>⚡ Tooken Club API (DeepSeek V4.1 Flash, 15M токенов)</option>
               <option value="own_gemini" style={{ background: '#111' }}>🔑 Мой собственный Gemini API ключ (Google AI Studio, Безлимит)</option>
               <option value="own_openrouter" style={{ background: '#111' }}>🌐 Мой собственный OpenRouter API ключ (Claude 3.5 Sonnet, GPT-4o)</option>
             </select>
@@ -459,7 +460,11 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Shield size={16} color="#a78bfa" />
                 <span style={{ fontSize: 12, fontWeight: 700, color: '#fff' }}>
-                  {textAiProvider === 'own_gemini' ? 'Личный ключ Gemini API (AIza...)' : 'Личный ключ OpenRouter API (sk-or-...)'}
+                  {textAiProvider === 'own_tooken'
+                    ? 'Ключ Tooken Club (tc_live_...)'
+                    : textAiProvider === 'own_gemini'
+                    ? 'Личный ключ Gemini API (AIza...)'
+                    : 'Личный ключ OpenRouter API (sk-or-...)'}
                 </span>
               </div>
 
@@ -471,7 +476,7 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
                     setTextAiKey(e.target.value);
                     setTextKeyTestResult(null);
                   }}
-                  placeholder={textAiProvider === 'own_gemini' ? 'AIzaSy...' : 'sk-or-v1-...'}
+                  placeholder={textAiProvider === 'own_tooken' ? 'tc_live_...' : textAiProvider === 'own_gemini' ? 'AIzaSy...' : 'sk-or-v1-...'}
                   style={{
                     flex: 1, background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.15)',
                     borderRadius: 10, padding: '10px 14px', color: '#fff', fontSize: 13,

@@ -95,8 +95,11 @@ class AiKeyManager:
             provider_map = {
                 "own_gemini":     "gemini",
                 "own_openrouter": "openrouter",
+                "own_tooken":     "tooken",
             }
-            provider = provider_map.get(project.ai_provider, "gemini")
+            provider = provider_map.get(project.ai_provider, "tooken" if raw_key.startswith("tc_live_") else "gemini")
+            if raw_key.startswith("tc_live_"):
+                provider = "tooken"
             logger.info(f"[AiKeyManager] Using own {provider} key for project {project.id}")
             return raw_key, provider
 

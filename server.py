@@ -80,10 +80,27 @@ ALLOWED_ORIGINS = [
 logger.info(f"CORS allowed origins: {ALLOWED_ORIGINS}")
 
 def get_default_ai_key() -> str:
+    pref = os.getenv("AI_PROVIDER", "").lower().strip()
+    if pref == "tooken" and os.getenv("TOOKEN_API_KEY", "").strip():
+        return os.getenv("TOOKEN_API_KEY", "").strip()
+    if pref == "openrouter" and os.getenv("OPENROUTER_API_KEY", "").strip():
+        return os.getenv("OPENROUTER_API_KEY", "").strip()
+    if pref == "groq" and os.getenv("GROQ_API_KEY", "").strip():
+        return os.getenv("GROQ_API_KEY", "").strip()
+    if pref == "openai" and os.getenv("OPENAI_API_KEY", "").strip():
+        return os.getenv("OPENAI_API_KEY", "").strip()
+    if pref == "gemini" and os.getenv("GEMINI_API_KEY", "").strip():
+        return os.getenv("GEMINI_API_KEY", "").strip()
+    if pref == "zapro" and os.getenv("ZAPRO_API_KEY", "").strip():
+        return os.getenv("ZAPRO_API_KEY", "").strip()
+
     return (
+        os.getenv("TOOKEN_API_KEY", "").strip() or
         os.getenv("ZAPRO_API_KEY", "").strip() or
         os.getenv("OPENAI_API_KEY", "").strip() or
-        os.getenv("GEMINI_API_KEY", "").strip()
+        os.getenv("GEMINI_API_KEY", "").strip() or
+        os.getenv("OPENROUTER_API_KEY", "").strip() or
+        os.getenv("GROQ_API_KEY", "").strip()
     )
 
 GEMINI_API_KEY = get_default_ai_key()
@@ -1481,7 +1498,7 @@ async def ai_rewrite(
                 # Фолбэк на дефолтный ключ из .env
                 default_key = get_default_ai_key()
                 if not default_key:
-                    raise HTTPException(status_code=503, detail="AI-ключи не настроены. Добавьте ZAPRO_API_KEY или GEMINI_API_KEY в .env.")
+                    raise HTTPException(status_code=503, detail="AI-ключи не настроены. Добавьте TOOKEN_API_KEY, ZAPRO_API_KEY или GEMINI_API_KEY в .env.")
                 resolved_key = default_key
             else:
                 raise HTTPException(status_code=503, detail=err.split("|", 1)[-1])
@@ -1490,7 +1507,7 @@ async def ai_rewrite(
     if not resolved_key:
         default_key = get_default_ai_key()
         if not default_key:
-            raise HTTPException(status_code=503, detail="AI API не настроен. Добавьте ZAPRO_API_KEY или GEMINI_API_KEY в .env.")
+            raise HTTPException(status_code=503, detail="AI API не настроен. Добавьте TOOKEN_API_KEY, ZAPRO_API_KEY или GEMINI_API_KEY в .env.")
         resolved_key = default_key
 
     try:
@@ -1506,19 +1523,19 @@ async def ai_rewrite(
         return {"rewritten_text": clean_rewritten, "tokens_used": tokens_used}
 
     except AIRewriteError as e:
-        logger.error(f"Gemini API rate limit/error after retries: {e}")
-        raise HTTPException(status_code=503, detail="Gemini API перегружен. Пост отложен.")
+        logger.error(f"AI rewrite error after retries: {e}")
+        raise HTTPException(status_code=503, detail=f"AI сервис временно недоступен: {e}")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Gemini error: {error_msg}")
+        logger.error(f"AI error: {error_msg}")
         if "API_KEY_INVALID" in error_msg or "invalid" in error_msg.lower():
             raise HTTPException(status_code=401, detail="Неверный API ключ")
         if "quota" in error_msg.lower() or "rate" in error_msg.lower() or "429" in error_msg:
-            raise HTTPException(status_code=503, detail="Gemini API перегружен. Пост отложен.")
+            raise HTTPException(status_code=503, detail=f"Лимит запросов AI превышен: {error_msg}")
         if "SAFETY" in error_msg:
-            raise HTTPException(status_code=422, detail="Gemini отклонил по политике безопасности")
+            raise HTTPException(status_code=422, detail="AI отклонил запрос по политике безопасности")
         raise HTTPException(status_code=503, detail=f"Ошибка AI рерайта: {error_msg}")
 
 
@@ -1568,8 +1585,9 @@ async def test_own_ai_key(
             api_key=api_key,
         )
         return {"status": "ok", "message": "✅ Ключ работает!", "provider": provider}
-    except AIRewriteError:
-        raise HTTPException(status_code=429, detail="Ключ валиден, но API перегружен — попробуйте позже")
+    except AIRewriteError as e:
+        logger.error(f"test_own_ai_key failed: {e}")
+        raise HTTPException(status_code=429, detail=f"Ошибка проверки ключа: {e}")
     except Exception as e:
         err = str(e)
         if "API_KEY_INVALID" in err or "invalid" in err.lower() or "400" in err:

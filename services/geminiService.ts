@@ -14,7 +14,7 @@
 // В prod настройте nginx reverse proxy или используйте полный URL
 const BACKEND_URL = '';
 // Allow the backend quick retry cycle to finish while preventing infinite freezes.
-const REWRITE_TIMEOUT_MS = 20_000;
+const REWRITE_TIMEOUT_MS = 35_000;
 
 export interface SmartPricePayload {
   mode?: 'single' | 'three_tier' | 'opt_retail';

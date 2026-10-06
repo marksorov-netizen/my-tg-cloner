@@ -27,8 +27,8 @@ ai_semaphore = asyncio.Semaphore(3)
 # Короткие задержки между попытками: быстро перезапрашиваем, не подвешивая интерфейс
 RETRY_DELAYS = [1, 2]
 
-# Жесткие тайм-ауты: соединение макс 3.5 сек, чтение макс 15 сек
-AI_HTTP_TIMEOUT = httpx.Timeout(timeout=15.0, connect=3.5)
+# Тайм-аут: соединение макс 5 сек, чтение макс 30 сек (нужно для reasoning-моделей вроде DeepSeek V4.1 Flash)
+AI_HTTP_TIMEOUT = httpx.Timeout(timeout=30.0, connect=5.0)
 
 
 import re
@@ -181,8 +181,13 @@ async def call_gemini_with_retry(
     provider = "auto"
     base_url = zapro_url
 
+    pref = os.getenv("AI_PROVIDER", "").lower().strip()
+
+    # Если в конфиге включен tooken, а ключ пустой или равен старому ключу zapro/gemini — переключаем на tooken
+    if pref == "tooken" and tooken_key and (not resolved_key or resolved_key in (zapro_key, gemini_key)):
+        resolved_key, provider, base_url = tooken_key, "tooken", tooken_url
+
     if not resolved_key:
-        pref = os.getenv("AI_PROVIDER", "").lower().strip()
         if pref == "tooken" and tooken_key:
             resolved_key, provider, base_url = tooken_key, "tooken", tooken_url
         elif pref == "openrouter" and openrouter_key:
@@ -211,7 +216,7 @@ async def call_gemini_with_retry(
             resolved_key, provider, base_url = openai_key, "openai", "https://api.openai.com/v1"
 
     if resolved_key:
-        if resolved_key.startswith("tc_live_"):
+        if resolved_key.startswith("tc_live_") or (tooken_key and resolved_key == tooken_key):
             provider, base_url = "tooken", tooken_url
 
     if not resolved_key:

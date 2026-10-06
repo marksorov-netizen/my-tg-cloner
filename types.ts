@@ -55,7 +55,7 @@ export interface Project {
   use_original_on_error?: boolean;
   duplicate_threshold: number;
   check_interval: number;         // секунды
-  ai_provider: 'platform' | 'own_gemini' | 'own_openrouter';  // AI провайдер
+  ai_provider: 'platform' | 'own_tooken' | 'own_gemini' | 'own_openrouter';  // AI провайдер
   has_own_ai_key: boolean;        // Есть ли сохранённый личный ключ
   pricing_enabled: boolean;
   vton_enabled?: boolean;
@@ -78,7 +78,7 @@ export interface ProjectCreatePayload {
   use_original_on_error?: boolean;
   duplicate_threshold?: number;
   check_interval?: number;
-  ai_provider?: 'platform' | 'own_gemini' | 'own_openrouter';
+  ai_provider?: 'platform' | 'own_tooken' | 'own_gemini' | 'own_openrouter';
   ai_api_key?: string;           // plaintext, шифруется на сервере
   pricing_enabled?: boolean;
   vton_enabled?: boolean;
