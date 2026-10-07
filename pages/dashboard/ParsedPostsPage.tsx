@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Newspaper, Trash2, RefreshCw, Search, Image as ImageIcon, CheckCircle, ArrowUpRight, Copy, Check, Filter } from 'lucide-react';
 import { apiService } from '../../services/apiService';
+import { copyToClipboard } from '../../utils/clipboard';
 
 interface ParsedPost {
   id: string;
@@ -69,9 +70,9 @@ export const ParsedPostsPage: React.FC = () => {
     }
   };
 
-  const copyText = (id: string, text?: string) => {
+  const copyText = async (id: string, text?: string) => {
     if (!text) return;
-    navigator.clipboard.writeText(text);
+    await copyToClipboard(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
   };

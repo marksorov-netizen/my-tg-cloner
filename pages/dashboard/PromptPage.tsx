@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AppConfig } from '../../types';
 import { Copy, Check, Play, Wand2, BookOpen, Loader2 } from 'lucide-react';
+import { copyToClipboard } from '../../utils/clipboard';
 
 
 interface PromptPageProps {
@@ -97,8 +98,8 @@ export const PromptPage: React.FC<PromptPageProps> = () => {
     }
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(activePrompt);
+  const handleCopy = async () => {
+    await copyToClipboard(activePrompt);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

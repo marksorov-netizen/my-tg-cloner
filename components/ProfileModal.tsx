@@ -4,6 +4,7 @@ import { X, Eye, EyeOff, Copy, Check, Clock, ShieldCheck, Sparkles, Smartphone, 
 import { getActionHistory } from '../services/actionHistory';
 import { apiService } from '../services/apiService';
 import { ImageProviderSettingsPanel } from './ImageProviderSettingsPanel';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -49,7 +50,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, con
   const trialHoursLeft = 18;
 
   const handleCopy = (text: string, field: string) => {
-    navigator.clipboard.writeText(text);
+    copyToClipboard(text);
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 2000);
   };

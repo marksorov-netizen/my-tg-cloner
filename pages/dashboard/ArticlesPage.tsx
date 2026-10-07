@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Package, ShoppingCart, Bot, Plus, Trash2, RefreshCw, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, CheckCircle, ExternalLink, Loader2, Play, Square, Bell, Search, Image as ImageIcon, X } from 'lucide-react';
+import { copyToClipboard } from '../../utils/clipboard';
 
 // ─── Types ────────────────────────────────────────────────────
 interface ArticleItem {
@@ -241,8 +242,8 @@ export const ArticlesPage: React.FC = () => {
     fetchOrders();
   };
 
-  const copyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
+  const copyCode = async (code: string) => {
+    await copyToClipboard(code);
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 2000);
   };
@@ -744,9 +745,13 @@ export const ArticlesPage: React.FC = () => {
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                             <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.5)' }}>📋 Текст для поставщика:</span>
                             <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(order.supplier_message || '');
-                                alert('Текст для поставщика скопирован!');
+                              onClick={async () => {
+                                const ok = await copyToClipboard(order.supplier_message || '');
+                                if (ok) {
+                                  alert('Текст для поставщика скопирован!');
+                                } else {
+                                  alert('Не удалось скопировать текст. Выделите его вручную.');
+                                }
                               }}
                               style={{
                                 background: 'rgba(56,189,248,0.2)', border: '1px solid rgba(56,189,248,0.4)',

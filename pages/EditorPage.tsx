@@ -3,6 +3,7 @@ import { AppConfig, ProcessedPost } from '../types';
 import { processSinglePost } from '../services/postProcessor';
 import { ProductImagePilot } from '../components/ProductImagePilot';
 import { ArrowRight, Play, Loader2, Sparkles, AlertCircle, Send, Edit3, Copy, Check } from 'lucide-react';
+import { copyToClipboard as safeCopyToClipboard } from '../utils/clipboard';
 
 interface EditorPageProps {
   config: AppConfig;
@@ -27,9 +28,9 @@ export const EditorPage: React.FC<EditorPageProps> = ({ config }) => {
     }
   };
 
-  const copyToClipboard = () => {
+  const copyToClipboard = async () => {
     if (result) {
-        navigator.clipboard.writeText(result.processedContent);
+        await safeCopyToClipboard(result.processedContent);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     }

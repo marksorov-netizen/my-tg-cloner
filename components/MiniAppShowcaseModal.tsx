@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Smartphone, RefreshCw, Trash2, ShoppingBag, CheckCircle, Sparkles, X, Share2 } from 'lucide-react';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface MiniAppPostItem {
   id: string;
@@ -58,8 +59,8 @@ export const MiniAppShowcaseModal: React.FC<MiniAppShowcaseModalProps> = ({ isOp
     }
   };
 
-  const copyMiniAppLink = () => {
-    navigator.clipboard.writeText('https://t.me/GhostPostBot/shop');
+  const copyMiniAppLink = async () => {
+    await copyToClipboard('https://t.me/GhostPostBot/shop');
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
