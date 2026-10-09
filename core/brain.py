@@ -320,21 +320,18 @@ class ProjectBrain:
             except Exception:
                 pass
 
-        # 🛡️ Умная очистка водяных знаков и брендирование фото (если включено в проекте)
+        # 👗 AI Fashion Studio & Очистка фото (если включено в проекте)
         if project and getattr(project, "vton_enabled", False) and media_files:
             try:
-                from core.watermark_cleaner import watermark_cleaner
-                badge_text = getattr(project, "brand_badge_text", None)
-                badge_text = badge_text.strip() if badge_text and badge_text.strip() else None
-                clean_mode = "hybrid" if badge_text else "inpaint"
-                logger.info(f"[Publish] Watermark cleaner enabled for project '{project.name}' (mode={clean_mode}). Cleaning media...")
-                media_files = await watermark_cleaner.process_post_media(
+                from core.vton_engine import vton_engine
+                logger.info(f"[Publish] AI Fashion Studio enabled for project '{project.name}'. Processing album of {len(media_files)} photos...")
+                media_files = await vton_engine.process_post_media(
                     media_files,
-                    brand_text=badge_text,
-                    mode=clean_mode
+                    garment_description=text,
+                    use_ai_generation=True
                 )
             except Exception as wm_err:
-                logger.warning(f"[Publish] Watermark cleaning failed: {wm_err}, proceeding with original media")
+                logger.warning(f"[Publish] Media processing failed: {wm_err}, proceeding with original media")
 
         # 🛡️ Абсолютная зачистка текста от контактов, телефонов и павильонов донора
         from core.donor_sanitizer import sanitize_donor_text

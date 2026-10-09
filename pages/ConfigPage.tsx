@@ -197,7 +197,7 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
         </button>
       </div>
 
-      {/* 👗 БЛОК: ВИРТУАЛЬНАЯ ПРИМЕРКА НА ФИРМЕННУЮ МОДЕЛЬ (VTON) */}
+      {/* 👗 БЛОК: AI FASHION STUDIO (GPT Image 2.5 / Tooken Club) */}
       <div style={{
         background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(0,0,0,0.6))',
         border: '1px solid rgba(16,185,129,0.35)',
@@ -214,16 +214,16 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
             </div>
             <div>
               <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
-                Виртуальная примерка на фирменную модель (VTON)
+                AI Fashion Studio (GPT Image 2.5 / Tooken Club)
                 <span style={{
                   background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid #10b981',
                   fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 6
                 }}>
-                  0 ₽ / БЕСПЛАТНО
+                  ⚡ TOOKEN CLUB 15M
                 </span>
               </div>
               <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
-                Замена фото доноров (диваны, пол, водяные знаки) на студийные фото с нашей моделью-брюнеткой
+                Поочередная генерация новых студийных фото для каждого цвета и ракурса одежды на живых моделях
               </div>
             </div>
           </div>
@@ -234,9 +234,10 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
           background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
           borderRadius: 14, padding: 16, fontSize: 13, color: 'rgba(255,255,255,0.7)', lineHeight: 1.6
         }}>
-          💡 <strong>Как это работает:</strong> При включённом тумблере бот автоматически берёт фото вещи из канала-донора, отсекает чужие логотипы и диванный фон, и надевает вещь на виртуальную модель. В Telegram-канале публикуется стильный альбом, где <strong>первым слайдом идёт фото с моделью</strong>, а затем детальные фото ткани.
+          💡 <strong>Как это работает:</strong> Бот скачивает все фото из альбома донора (красный, черный, бежевый цвета и т.д.), поочередно генерирует для каждой расцветки роскошную журнальную фотосессию через <strong>GPT Image 2.5 (Tooken Club)</strong>, делает AI-рерайт текста через <strong>DeepSeek V4.1 Flash</strong> с расчетом наценок, и публикует готовый связанный альбом в канал.
         </div>
       </div>
+
 
       {/* 🎬 1. БЛОК: AI ВИДЕО-ГЕНЕРАЦИЯ (IMAGE-TO-VIDEO) */}
       <div style={{

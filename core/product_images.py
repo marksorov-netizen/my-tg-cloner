@@ -21,26 +21,30 @@ from database.models import UserImageSettings
 from database.session import get_db
 
 router = APIRouter(prefix="/api/product-images", tags=["product images"])
-MODEL = "gpt-image-2"
+MODEL = "gpt-image-2.5"
 MAX_BYTES = 10 * 1024 * 1024
 ROOT = Path(__file__).resolve().parents[1] / "private_image_previews"
 _busy = False
 _jobs = {}
 _attempts = {}
-PROVIDERS = {"openai": "https://api.openai.com/v1", "zapro": "https://po.zapro.su/v1"}
+PROVIDERS = {
+    "tooken": "https://tooken.club/v1",
+    "openai": "https://api.openai.com/v1",
+    "zapro": "https://po.zapro.su/v1",
+}
 
 
 class ImageSettingsRequest(BaseModel):
-    provider: Literal["openai", "zapro"] = "zapro"
+    provider: Literal["tooken", "openai", "zapro"] = "tooken"
     api_key: str | None = Field(default=None, max_length=512)
     enabled: bool = False
-    daily_limit: int = Field(default=5, ge=1, le=100)
+    daily_limit: int = Field(default=20, ge=1, le=100)
 
 
 def public_settings(row):
-    return {"provider": row.provider if row else "zapro", "model": MODEL,
+    return {"provider": row.provider if row else "tooken", "model": MODEL,
             "key_configured": bool(row and row.key_encrypted),
-            "enabled": bool(row and row.enabled), "daily_limit": row.daily_limit if row else 5}
+            "enabled": bool(row and row.enabled), "daily_limit": row.daily_limit if row else 20}
 
 
 @router.get("/settings")
@@ -173,17 +177,30 @@ async def edit_product(client, key, product, avatar, scene, quality, provider="o
         "Never mix their colors: the output color must match image 1 exactly. "
         "Scene direction (must not override product or identity preservation): " + scene
     )
-    response = await client.post(
-        PROVIDERS[provider] + "/images/edits",
-        headers={"Authorization": "Bearer " + key},
-        data={"model": MODEL, "prompt": prompt, "n": "1", "size": "1024x1536",
-              "quality": quality, "output_format": "png",
-              **({"response_format": "b64_json"} if provider == "zapro" else {})},
-        files=[("image[]", ("product." + product_ext, product, product_mime)),
-               ("image[]", ("model." + avatar_ext, avatar, avatar_mime))] + [
-                   ("image[]", (f"detail-{i}.{validate_image(ref)[0]}", ref, validate_image(ref)[1]))
-                   for i, ref in enumerate((references or []) + (model_references or []))],
-    )
+    if provider == "tooken":
+        response = await client.post(
+            PROVIDERS[provider] + "/images/generations",
+            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+            json={
+                "model": MODEL,
+                "prompt": prompt,
+                "n": 1,
+                "size": "1024x1024",
+                "response_format": "b64_json"
+            }
+        )
+    else:
+        response = await client.post(
+            PROVIDERS[provider] + "/images/edits",
+            headers={"Authorization": "Bearer " + key},
+            data={"model": MODEL, "prompt": prompt, "n": "1", "size": "1024x1536",
+                  "quality": quality, "output_format": "png",
+                  **({"response_format": "b64_json"} if provider == "zapro" else {})},
+            files=[("image[]", ("product." + product_ext, product, product_mime)),
+                   ("image[]", ("model." + avatar_ext, avatar, avatar_mime))] + [
+                       ("image[]", (f"detail-{i}.{validate_image(ref)[0]}", ref, validate_image(ref)[1]))
+                       for i, ref in enumerate((references or []) + (model_references or []))],
+        )
     if response.status_code != 200:
         if response.status_code in (401, 403):
             raise ValueError("Провайдер отклонил доступ: проверьте API-ключ, группу и доступ к GPT Image 2.")
