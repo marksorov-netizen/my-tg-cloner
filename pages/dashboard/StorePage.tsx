@@ -986,10 +986,10 @@ export const StorePage: React.FC<StorePageProps> = ({ config }) => {
                 />
                 <div>
                   <span style={{ color: enableVton ? '#10b981' : '#fff' }}>
-                    {enableVton ? '✅ Очистка водяных знаков и брендирование ВКЛЮЧЕНА' : '⚪ Включить очистку водяных знаков и брендирование'}
+                    {enableVton ? '✅ AI Fashion Studio (GPT Image 2.5) ВКЛЮЧЕНА' : '⚪ Включить AI Fashion Studio (Генерация студийных фото GPT Image 2.5 на моделях)'}
                   </span>
                   <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontWeight: 400, marginTop: 2 }}>
-                    Фото донора сохраняют исходные размеры. Проверьте очистку на предпросмотре; сложный фон под знаком может восстановиться неточно.
+                    Поочередная генерация роскошных журнальных фото для каждого цвета одежды через Tooken Club (15M токенов) + очистка водяных знаков.
                   </div>
                 </div>
               </label>
