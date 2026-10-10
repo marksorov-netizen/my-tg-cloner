@@ -1,20 +1,20 @@
 """
 core/vton_engine.py
 
-Единый фасад для AI-фотосессий (AI Fashion Studio / GPT Image 2.5) и очистки водяных знаков.
-Обеспечивает 100% обратную совместимость со всеми вызовами vton_engine в проекте.
+Единый фасад для AI-улучшения фото (AI HD Upscale) и очистки водяных знаков.
+Гарантирует 100% сохранение реального товара донора (без замены на чужую одежду).
 """
 
 from typing import Optional, List
 from core.watermark_cleaner import watermark_cleaner, WatermarkCleaner
-from core.ai_fashion_studio import ai_fashion_studio, AiFashionStudio
+from core.image_upscaler import image_upscaler, ImageUpscaler
 
 
 class CleanEngineAdapter:
-    """Адаптер для модных фотосессий и очистки фото."""
+    """Адаптер для улучшения фото и очистки водяных знаков."""
     def __init__(self):
         self.cleaner = watermark_cleaner
-        self.studio = ai_fashion_studio
+        self.upscaler = image_upscaler
 
     async def try_on_garment(
         self,
@@ -23,36 +23,48 @@ class CleanEngineAdapter:
         garment_description: str = "stylish fashionable garment",
         **kwargs
     ) -> Optional[str]:
-        """Генерирует новую студийную фотографию вещи или очищает водяной знак."""
-        res = await self.studio.process_donor_album([garment_image_path], post_text=garment_description, max_generations=1)
-        if res and len(res) > 0:
-            return res[0]
-        return self.cleaner.clean_image(garment_image_path, mode="hybrid", brand_text="EXCLUSIVE COLLECTION")
+        """Очищает водяной знак и улучшает качество реального фото товара."""
+        cleaned = self.cleaner.clean_image(garment_image_path, mode="hybrid", brand_text="EXCLUSIVE COLLECTION")
+        if cleaned:
+            return await self.upscaler.upscale_image(cleaned, scale=2.0)
+        return await self.upscaler.upscale_image(garment_image_path, scale=2.0)
 
     async def process_post_media(
         self,
         media_files: list,
         garment_description: str = "stylish fashionable garment",
         use_ai_generation: bool = True,
+        brand_text: Optional[str] = None,
+        mode: str = "hybrid",
+        position: str = "auto",
         **kwargs
     ) -> list:
         """
-        Поочередно генерирует студийные фото каждого цвета через Tooken Club (GPT Image 2.5)
-        или очищает фото от водяных знаков.
+        1. Очищает все фото альбома от чужих водяных знаков и телефонов донора.
+        2. Делает 2x HD Upscale и повышение резкости ткани/швов для каждого реального фото.
+        3. Сохраняет 100% реального товара донора!
         """
-        if use_ai_generation:
-            try:
-                ai_album = await self.studio.process_donor_album(media_files, post_text=garment_description)
-                if ai_album:
-                    return ai_album
-            except Exception:
-                pass
+        # Шаг 1: Очистка от водяных знаков
+        try:
+            cleaned_media = await self.cleaner.process_post_media(
+                media_files,
+                brand_text=brand_text,
+                mode=mode,
+                position=position
+            )
+        except Exception:
+            cleaned_media = media_files
 
-        return await self.cleaner.process_post_media(media_files, brand_text="EXCLUSIVE STORE", mode="hybrid")
+        # Шаг 2: HD Upscale и повышение резкости ткани/швов реального товара
+        try:
+            upscaled_media = await self.upscaler.upscale_album(cleaned_media, scale=2.0)
+            return upscaled_media
+        except Exception:
+            return cleaned_media
 
 
 vton_engine = CleanEngineAdapter()
 VirtualTryOnEngine = CleanEngineAdapter
 
-__all__ = ["VirtualTryOnEngine", "vton_engine", "ai_fashion_studio", "AiFashionStudio", "watermark_cleaner", "WatermarkCleaner"]
+__all__ = ["VirtualTryOnEngine", "vton_engine", "image_upscaler", "ImageUpscaler", "watermark_cleaner", "WatermarkCleaner"]
 

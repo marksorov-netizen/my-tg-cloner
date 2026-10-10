@@ -1020,18 +1020,22 @@ async def batch_send(req: SendRequest, current_user: User = Depends(get_current_
                                         "detail": "Товар с аналогичным фото уже выкладывался за последние 24 часа"
                                     }
 
-                            # 👗 AI Fashion Studio (Tooken Club GPT Image 2.5) & Очистка фото перед публикацией
+                            # 💎 AI HD Upscale & Очистка фото перед публикацией
                             if req.vton_enabled and media_files:
                                 try:
                                     from core.vton_engine import vton_engine
-                                    logger.info(f"[BatchSend] AI Fashion Studio enabled for {clean_dest}. Processing {len(media_files)} photos...")
+                                    custom_badge = req.brand_badge_text.strip() if req.brand_badge_text and req.brand_badge_text.strip() else None
+                                    pos = req.watermark_position or "auto"
+                                    logger.info(f"[BatchSend] AI HD Upscale & Clean enabled for {clean_dest}. Processing {len(media_files)} photos...")
                                     media_files = await vton_engine.process_post_media(
                                         media_files,
                                         garment_description=req.text,
-                                        use_ai_generation=True
+                                        brand_text=custom_badge,
+                                        mode="hybrid" if custom_badge else "inpaint",
+                                        position=pos
                                     )
                                 except Exception as wm_err:
-                                    logger.warning(f"[BatchSend] AI Fashion Studio processing failed: {wm_err}, proceeding with original media")
+                                    logger.warning(f"[BatchSend] Media enhancement failed: {wm_err}, proceeding with original media")
 
                             # Публикация в канал (единым постом/альбомом с описанием)
                             sent_res = None

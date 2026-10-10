@@ -197,7 +197,7 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
         </button>
       </div>
 
-      {/* 👗 БЛОК: AI FASHION STUDIO (GPT Image 2.5 / Tooken Club) */}
+      {/* 💎 БЛОК: AI HD UPSCALE & ОЧИСТКА ФОТО (2x Lanczos + Micro-Sharpening) */}
       <div style={{
         background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(0,0,0,0.6))',
         border: '1px solid rgba(16,185,129,0.35)',
@@ -210,20 +210,20 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
               width: 42, height: 42, borderRadius: 12, background: 'rgba(16,185,129,0.2)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22
             }}>
-              👗
+              💎
             </div>
             <div>
               <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
-                AI Fashion Studio (GPT Image 2.5 / Tooken Club)
+                AI HD Upscale & Очистка фото (2x Разрешение + Резкость ткани)
                 <span style={{
                   background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid #10b981',
                   fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 6
                 }}>
-                  ⚡ TOOKEN CLUB 15M
+                  100% РЕАЛЬНЫЙ ТОВАР • 0 ₽
                 </span>
               </div>
               <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
-                Поочередная генерация новых студийных фото для каждого цвета и ракурса одежды на живых моделях
+                Увеличение разрешения фото до 2K/4K, резкость швов и принтов, затирка чужих водяных знаков без замены одежды
               </div>
             </div>
           </div>
@@ -234,7 +234,7 @@ export const ConfigPage: React.FC<ConfigPageProps> = () => {
           background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
           borderRadius: 14, padding: 16, fontSize: 13, color: 'rgba(255,255,255,0.7)', lineHeight: 1.6
         }}>
-          💡 <strong>Как это работает:</strong> Бот скачивает все фото из альбома донора (красный, черный, бежевый цвета и т.д.), поочередно генерирует для каждой расцветки роскошную журнальную фотосессию через <strong>GPT Image 2.5 (Tooken Club)</strong>, делает AI-рерайт текста через <strong>DeepSeek V4.1 Flash</strong> с расчетом наценок, и публикует готовый связанный альбом в канал.
+          💡 <strong>Как это работает:</strong> Бот сохраняет <strong>100% реальной одежды донора</strong> (точный цвет, фасон, фактуру и швы). Нейро-ластик затирает чужие телефоны и водяные знаки, встроенный Smart HD Upscaler повышает разрешение в 2 раза с усилением микро-резкости ткани, а <strong>DeepSeek V4.1 Flash</strong> генерирует продающий текст с наценками. Никаких чужих случайных платьев!
         </div>
       </div>
 
