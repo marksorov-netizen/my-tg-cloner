@@ -126,9 +126,30 @@ class TaskExecutionService {
   public followServerTask(module: 'store' | 'parser', donors: string[], targets: string[], total: number) {
     this.isMasterRunner = false;
     this.taskStartedAt = Date.now();
-    const state = {isProcessing: true, isLiveMonitoring: false, donors, targets, total, current: 0, countdownSec: 0, statusMessage: 'Фоновая обработка на сервере…'};
+    const state = {isProcessing: true, isLiveMonitoring: false, donors, targets, total, current: 0, countdownSec: 0, logs: [], statusMessage: 'Фоновая обработка на сервере…'};
     if (module === 'store') { this.storeCancelled = false; this.updateStoreState(state); }
     else { this.parserCancelled = false; this.updateParserState(state); }
+  }
+
+  public async startAutonomousServerTask(payload: Record<string, any>) {
+    const module: 'store' | 'parser' = payload.module === 'parser' ? 'parser' : 'store';
+    const donors = payload.donors || (payload.donor ? [payload.donor] : []);
+    const targets = payload.targets || [];
+    const total = Number(payload.limit || payload.total || 5);
+
+    this.followServerTask(module, donors, targets, total);
+
+    try {
+      const res = await apiService.startTask({
+        ...payload,
+        run_on_server: true,
+      });
+      return res;
+    } catch (error) {
+      if (module === 'store') this.stopStore(true);
+      else this.stopParser(true);
+      throw error;
+    }
   }
 
   public stopParser(remoteOnly: boolean = false) {
@@ -199,7 +220,7 @@ class TaskExecutionService {
   // Фоновый поллинг для синхронизации ПК и телефона
   private startStatusPolling() {
     if (this.pollIntervalId) return;
-    this.pollIntervalId = setInterval(async () => {
+    const pollOnce = async () => {
       try {
         const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
         if (!token && typeof localStorage !== 'undefined' && !localStorage.getItem('ghostpost_auth')) {
@@ -242,8 +263,8 @@ class TaskExecutionService {
           return;
         }
 
-        // Если мы НЕ исполняем задачу на этом устройстве (например, открыли на телефоне),
-        // а сервер сообщает, что задача запущена (на ПК) — подтягиваем прогресс!
+        // Если мы НЕ исполняем задачу на этом устройстве (или задача исполняется автономно на сервере),
+        // подтягиваем прогресс и логи в реальном времени!
         if (!this.isMasterRunner) {
           if (serverStatus.is_running) {
             if (serverStatus.module === 'store') {
@@ -257,6 +278,7 @@ class TaskExecutionService {
                 countdownSec: serverStatus.countdown_sec,
                 donors: serverStatus.donor ? [serverStatus.donor] : this.storeTask.donors,
                 targets: serverStatus.targets?.length ? serverStatus.targets : this.storeTask.targets,
+                logs: Array.isArray(serverStatus.logs) ? serverStatus.logs : this.storeTask.logs,
               };
               this.notify();
             } else if (serverStatus.module === 'parser') {
@@ -270,17 +292,57 @@ class TaskExecutionService {
                 countdownSec: serverStatus.countdown_sec,
                 donors: serverStatus.donor ? [serverStatus.donor] : this.parserTask.donors,
                 targets: serverStatus.targets?.length ? serverStatus.targets : this.parserTask.targets,
+                logs: Array.isArray(serverStatus.logs) ? serverStatus.logs : this.parserTask.logs,
               };
               this.notify();
             }
           } else if (this.storeTask.isProcessing || this.parserTask.isProcessing) {
             // Задача на сервере завершилась
             if (this.storeTask.isProcessing) {
-              this.storeTask = { ...this.storeTask, isProcessing: false, statusMessage: serverStatus.status_message || 'Завершено' };
+              this.storeTask = {
+                ...this.storeTask,
+                isProcessing: false,
+                isLiveMonitoring: Boolean(serverStatus.is_live_monitoring),
+                current: serverStatus.current ?? this.storeTask.current,
+                total: serverStatus.total ?? this.storeTask.total,
+                countdownSec: 0,
+                statusMessage: serverStatus.status_message || 'Завершено',
+                logs: Array.isArray(serverStatus.logs) && serverStatus.logs.length > 0 ? serverStatus.logs : this.storeTask.logs,
+              };
               this.notify();
             }
             if (this.parserTask.isProcessing) {
-              this.parserTask = { ...this.parserTask, isProcessing: false, statusMessage: serverStatus.status_message || 'Завершено' };
+              this.parserTask = {
+                ...this.parserTask,
+                isProcessing: false,
+                isLiveMonitoring: Boolean(serverStatus.is_live_monitoring),
+                current: serverStatus.current ?? this.parserTask.current,
+                total: serverStatus.total ?? this.parserTask.total,
+                countdownSec: 0,
+                statusMessage: serverStatus.status_message || 'Завершено',
+                logs: Array.isArray(serverStatus.logs) && serverStatus.logs.length > 0 ? serverStatus.logs : this.parserTask.logs,
+              };
+              this.notify();
+            }
+          } else if (Array.isArray(serverStatus.logs) && serverStatus.logs.length > 0) {
+            // Если пользователь зашёл на сайт уже ПОСЛЕ того как фоновая задача завершилась — показываем её итог!
+            if (serverStatus.module === 'store' && this.storeTask.logs.length === 0) {
+              this.storeTask = {
+                ...this.storeTask,
+                current: serverStatus.current,
+                total: serverStatus.total,
+                statusMessage: serverStatus.status_message,
+                logs: serverStatus.logs,
+              };
+              this.notify();
+            } else if (serverStatus.module === 'parser' && this.parserTask.logs.length === 0) {
+              this.parserTask = {
+                ...this.parserTask,
+                current: serverStatus.current,
+                total: serverStatus.total,
+                statusMessage: serverStatus.status_message,
+                logs: serverStatus.logs,
+              };
               this.notify();
             }
           }
@@ -288,7 +350,9 @@ class TaskExecutionService {
       } catch {
         // Фоновая ошибка поллинга — не мешает работе
       }
-    }, 2000);
+    };
+    pollOnce();
+    this.pollIntervalId = setInterval(pollOnce, 1500);
   }
 }
 

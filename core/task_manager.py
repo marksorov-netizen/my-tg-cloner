@@ -41,7 +41,7 @@ class BackgroundTaskManager:
             return
         allowed = {
             "is_running", "is_live_monitoring", "module", "donor", "targets",
-            "current", "total", "status_message", "countdown_sec",
+            "current", "total", "status_message", "countdown_sec", "logs",
         }
         safe_updates = {key: deepcopy(value) for key, value in updates.items() if key in allowed}
         if safe_updates.get("is_running"):
@@ -64,6 +64,7 @@ class BackgroundTaskManager:
         self.state["current"] = 0
         self.state["status_message"] = "Запуск процесса..."
         self.state["countdown_sec"] = 0
+        self.state["logs"] = []
         self.state["started_at"] = _now()
         self.state["updated_at"] = _now()
 
@@ -74,13 +75,17 @@ class BackgroundTaskManager:
         self.state["status_message"] = "Остановлено пользователем"
         self.state["updated_at"] = _now()
 
-    def add_log(self, title: str, text: str, status: str = "info"):
+    def add_log(self, title: str, text: str, status: str = "info", extra: Dict[str, Any] = None):
+        now_time = datetime.now(timezone.utc).strftime("%H:%M:%S")
         log_entry = {
             "title": title,
             "text": text,
             "status": status,
-            "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S")
+            "timestamp": now_time,
+            "time": now_time,
         }
+        if extra:
+            log_entry.update(extra)
         logs = self.state.get("logs", [])
         self.state["logs"] = [log_entry] + logs[:49]  # храним последние 50 записей
 

@@ -201,23 +201,39 @@ export const ParserPage: React.FC<ParserPageProps> = ({ config }) => {
       return;
     }
     cancelRef.current = false;
-    try { await taskExecutionService.startParserTask(); }
-    catch (exc) { alert(exc instanceof Error ? exc.message : 'Не удалось запустить парсинг.'); return; }
-
     const donorClean = cleanChannel(donors[0]);
     const targetCleanList = targetChannels.map(cleanChannel);
 
-    taskExecutionService.updateParserState({
-      donors: [donorClean],
-      targets: targetCleanList,
-      current: 0,
-      total: copyCount,
-      countdownSec: 0,
-      statusMessage: `Загрузка ${copyCount} постов из канала-донора ${donorClean}...`,
-      logs: []
-    });
-
-    addActionLog('📰 Запуск парсера', `Запрошено ${copyCount} постов из ${donorClean} ➔ ${targetCleanList.join(', ')}`, 'success');
+    try {
+      await taskExecutionService.startAutonomousServerTask({
+        module: 'parser',
+        donor: donorClean,
+        donors: donors.map(cleanChannel),
+        targets: targetCleanList,
+        limit: copyCount,
+        total: copyCount,
+        interval_seconds: Math.round(intervalMinutes * 60),
+        prompt: promptText,
+        filter_ads: false,
+        download_photos: true,
+        create_articles: false,
+        sync_to_miniapp: false,
+        live_monitoring: enableLiveMonitoringAfterBatch,
+        vton_enabled: enableVton,
+        brand_badge_text: brandBadgeText || undefined,
+        watermark_position: watermarkPosition || 'auto',
+        enable_video_gen: enableVideoGen,
+        video_aspect_ratio: videoAspectRatio,
+        video_provider: videoProvider,
+        video_api_key: videoApiKey || undefined,
+        video_motion_style: videoMotionStyle,
+      });
+      addActionLog('📰 Автономный запуск парсера (Сервер)', `Запущен фоновый перенос ${copyCount} постов из ${donorClean} ➔ ${targetCleanList.join(', ')}. Можно закрывать сайт!`, 'success');
+      return;
+    } catch (exc) {
+      alert(exc instanceof Error ? exc.message : 'Не удалось запустить фоновый парсинг на сервере.');
+      return;
+    }
 
     try {
       // 1. Fetch N messages from donor channel

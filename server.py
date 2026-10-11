@@ -584,8 +584,407 @@ async def set_user_pin(data: dict, db: AsyncSession = Depends(get_db), current_u
     return {"status": "ok", "pin_configured": True}
 
 
-# ── СИНХРОНИЗАЦИЯ ЗАДАЧ МЕЖДУ ПК И ТЕЛЕФОНОМ ──────────────────────
+# ── СИНХРОНИЗАЦИЯ И АВТОНОМНОЕ ВЫПОЛНЕНИЕ ЗАДАЧ НА СЕРВЕРЕ (ПК ↔ ТЕЛЕФОН) ──────────────────────
 from core.task_manager import task_managers
+
+BACKGROUND_BATCH_WORKERS: Dict[str, asyncio.Task] = {}
+
+
+async def _run_autonomous_batch_worker(user_id: str, payload: dict):
+    """
+    Полностью автономный фоновый воркер парсинга на сервере.
+    Работает независимо от браузера: можно закрыть вкладку, выйти с сайта или выключить телефон —
+    сервер продолжит парсить все N постов с интервалом и при необходимости перейдёт в живой мониторинг!
+    """
+    manager = task_managers.for_user(user_id)
+    module = payload.get("module", "store")
+    donors_raw = payload.get("donors") or ([payload.get("donor")] if payload.get("donor") else [])
+    donors = [clean_channel_identifier(d) for d in donors_raw if d and str(d).strip()]
+    targets = [clean_channel_identifier(t) for t in (payload.get("targets") or []) if t and str(t).strip()]
+    limit = int(payload.get("limit") or payload.get("total") or 5)
+    interval_seconds = int(payload.get("interval_seconds") or 0)
+    custom_prompt = (payload.get("prompt") or "").strip()
+    filter_ads = bool(payload.get("filter_ads", True))
+    download_photos = bool(payload.get("download_photos", True))
+    create_articles = bool(payload.get("create_articles", True)) if module == "store" else False
+    sync_to_miniapp = bool(payload.get("sync_to_miniapp", False)) if module == "store" else False
+    article_prefix = (payload.get("article_prefix") or "ART").strip()
+    live_monitoring = bool(payload.get("live_monitoring", False))
+
+    # Ценообразование для магазина
+    price_mode = payload.get("price_mode", "single")
+    single_markup = float(payload.get("single_markup", 30))
+    wholesale_markup = float(payload.get("wholesale_markup", 10))
+    drop_markup = float(payload.get("drop_markup", 20))
+    retail_markup = float(payload.get("retail_markup", 30))
+    currency = payload.get("currency", "₽")
+
+    # Медиа / AI HD Upscale & Очистка / Видео
+    vton_enabled = bool(payload.get("vton_enabled", False))
+    brand_badge_text = payload.get("brand_badge_text") or None
+    watermark_position = payload.get("watermark_position") or "auto"
+    enable_video_gen = bool(payload.get("enable_video_gen", False))
+    video_aspect_ratio = payload.get("video_aspect_ratio") or "9:16"
+    video_provider = payload.get("video_provider") or "builtin"
+    video_api_key = payload.get("video_api_key") or None
+    video_motion_style = payload.get("video_motion_style") or "trending_cinematic"
+
+    try:
+        from database.session import async_session
+        async with async_session() as db:
+            user = await db.get(User, user_id)
+            if not user:
+                manager.update_state({"is_running": False, "status_message": "❌ Пользователь не найден"})
+                return
+
+        if not donors or not targets:
+            manager.update_state({"is_running": False, "status_message": "❌ Не указаны доноры или целевые каналы"})
+            return
+
+        donor_clean = donors[0]
+        manager.update_state({
+            "is_running": True,
+            "module": module,
+            "donor": donor_clean,
+            "targets": targets,
+            "current": 0,
+            "total": limit,
+            "countdown_sec": 0,
+            "status_message": f"Загрузка {limit} постов из канала {donor_clean}...",
+        })
+
+        # 1. Скачиваем историю постов донора
+        messages = await batch_fetch(FetchRequest(channel=donor_clean, limit=limit), user, None)
+        if manager.get_state()["should_stop"]:
+            return
+
+        if not messages:
+            manager.update_state({
+                "is_running": False,
+                "status_message": f"Канал {donor_clean} пуст или не удалось прочитать посты."
+            })
+            return
+
+        total_msgs = len(messages)
+        manager.update_state({
+            "total": total_msgs,
+            "status_message": f"Найдено {total_msgs} постов. Публикация в {', '.join(targets)}..."
+        })
+
+        # Получаем username бота заказов
+        bot_username = ""
+        try:
+            async with async_session() as db:
+                cfg_res = await db.execute(select(OrderBotConfig).limit(1))
+                cfg_obj = cfg_res.scalar_one_or_none()
+                if cfg_obj and cfg_obj.bot_username:
+                    bot_username = cfg_obj.bot_username.replace("@", "").strip()
+        except Exception:
+            pass
+
+        # 2. Последовательный цикл по каждому посту (выполняется на сервере!)
+        from core.donor_sanitizer import sanitize_donor_text
+        from core.product_pricing import prices as calc_prices
+
+        class _PriceReq:
+            pass
+
+        p_req = _PriceReq()
+        p_req.price_mode = price_mode
+        p_req.single_markup = single_markup
+        p_req.wholesale_markup = wholesale_markup
+        p_req.drop_markup = drop_markup
+        p_req.retail_markup = retail_markup
+        p_req.currency = currency
+
+        for i, msg in enumerate(messages):
+            if manager.get_state()["should_stop"]:
+                break
+
+            raw_text = msg.get("text") or ""
+            msg_id = msg.get("id")
+            item_label = "Товар" if module == "store" else "Пост"
+
+            # Фильтр рекламы
+            if filter_ads and any(w in raw_text.lower() for w in ("реклама", "подпишись")):
+                manager.add_log(
+                    f"{item_label} #{i + 1}",
+                    raw_text,
+                    "skipped_ad",
+                    {"id": msg_id, "detail": "Пропущен (реклама)"}
+                )
+                continue
+
+            manager.update_state({
+                "current": i + 1,
+                "countdown_sec": 0,
+                "status_message": f"Обработка {item_label.lower()}а {i + 1} из {total_msgs} — AI рерайт и подготовка..."
+            })
+
+            if manager.get_state()["should_stop"]:
+                break
+
+            # Расчёт цен для интернет-магазина
+            calculated = calc_prices(raw_text, p_req) if module == "store" else {}
+            clean_input = sanitize_donor_text(raw_text, allowed_bot=bot_username)
+            processed_text = clean_input
+
+            # Формируем промпт для AI рерайта
+            anti_donor_rules = (
+                "СТРОЖАЙШИЙ ЗАПРЕТ НА ДАННЫЕ И КОНТАКТЫ ДОНОРА:\n"
+                "1. Удали любые номера телефонов, ссылки, чужие аккаунты (@...) и контакты менеджеров.\n"
+                "2. Удали названия рынков, корпусов, линий и павильонов (Садовод, ТЯК, Люблино и т.д.).\n"
+                "3. Верни ТОЛЬКО готовый текст поста от первого лица нашего магазина без вступлений."
+            )
+
+            if module == "store":
+                if calculated:
+                    if price_mode == "single":
+                        price_instr = f"Удали все старые цены поставщика и напиши ТОЛЬКО одну цену:\n💰 Цена: {calculated.get('retail')} {currency}"
+                    elif price_mode == "opt_retail":
+                        price_instr = f"Замени старые цены на наш прайс:\n📦 Опт: {calculated.get('wholesale')} {currency}\n🏷️ Розница: {calculated.get('retail')} {currency}"
+                    else:
+                        price_instr = f"Замени старые цены на наш прайс:\n📦 Опт: {calculated.get('wholesale')} {currency}\n🤝 Дроп: {calculated.get('drop')} {currency}\n🏷️ Розница: {calculated.get('retail')} {currency}"
+                else:
+                    price_instr = "Сохрани характеристики товара (размеры, цвета, ткань)."
+
+                base_p = custom_prompt or "Создай привлекательный продающий пост для нашего Telegram-магазина. Сделай текст структурированным, добавь эмодзи."
+                full_prompt = f"{base_p}\n\n{anti_donor_rules}\n\n{price_instr}"
+            else:
+                base_p = custom_prompt or "Перепиши этот пост для Telegram-канала. Сделай его ярким, вовлекающим и уникальным."
+                full_prompt = f"{base_p}\n\n{anti_donor_rules}"
+
+            try:
+                async with async_session() as db:
+                    rw_res = await ai_rewrite(
+                        RewriteRequest(
+                            text=clean_input,
+                            prompt=full_prompt,
+                            mode="product" if module == "store" else "news"
+                        ),
+                        db,
+                        user
+                    )
+                    if rw_res and rw_res.get("rewritten_text"):
+                        processed_text = sanitize_donor_text(rw_res["rewritten_text"], allowed_bot=bot_username)
+            except Exception as ai_err:
+                logger.warning(f"[AutonomousWorker] AI rewrite fallback for post {msg_id}: {ai_err}")
+                processed_text = clean_input
+
+            # Гарантируем наличие рассчитанных цен в тексте магазина
+            if module == "store" and calculated and currency not in processed_text:
+                if price_mode == "single":
+                    processed_text += f"\n\n💰 Цена: {calculated.get('retail')} {currency}"
+                elif price_mode == "opt_retail":
+                    processed_text += f"\n\n📦 Опт: {calculated.get('wholesale')} {currency}\n🏷️ Розница: {calculated.get('retail')} {currency}"
+                else:
+                    processed_text += (
+                        f"\n\n📦 Опт: {calculated.get('wholesale')} {currency}"
+                        f"\n🤝 Дроп: {calculated.get('drop')} {currency}"
+                        f"\n🏷️ Розница: {calculated.get('retail')} {currency}"
+                    )
+
+            if manager.get_state()["should_stop"]:
+                break
+
+            # Создание артикула (для магазина)
+            article_code = ""
+            if module == "store" and create_articles:
+                try:
+                    async with async_session() as db:
+                        art_res = await create_article(
+                            ArticleCreateRequest(
+                                title=processed_text.split("\n")[0][:120] or f"Товар #{i + 1}",
+                                description=processed_text,
+                                original_text=raw_text,
+                                price=f"{calculated['retail']} {currency}" if calculated.get("retail") else None,
+                                wholesale_price=f"{calculated['wholesale']} {currency}" if calculated.get("wholesale") else None,
+                                drop_price=f"{calculated['drop']} {currency}" if calculated.get("drop") else None,
+                                currency=currency,
+                                source_channel=donor_clean,
+                                target_channel=targets[0],
+                                category="Товар",
+                                article_prefix=article_prefix or "ART",
+                                source_msg_id=msg_id,
+                            ),
+                            db,
+                            user
+                        )
+                        article_code = art_res.get("article_code") or ""
+                except Exception as art_err:
+                    logger.warning(f"[AutonomousWorker] Failed to create article: {art_err}")
+
+            if article_code:
+                processed_text += f"\n\n🏷️ **Артикул:** `{article_code}`"
+                if bot_username:
+                    processed_text += f"\n👉 [🛒 Чтобы заказать — нажмите сюда](https://t.me/{bot_username}?start={article_code})"
+
+            if manager.get_state()["should_stop"]:
+                break
+
+            # Отправка во все целевые каналы
+            last_media_count = 0
+            is_skipped = False
+            skip_detail = "Пропущен (дубликат)"
+            publish_success = False
+
+            for target in targets:
+                if manager.get_state()["should_stop"]:
+                    break
+                manager.update_state({
+                    "status_message": f"Публикация {item_label.lower()}а {i + 1}/{total_msgs} в канал {target}..."
+                })
+                try:
+                    send_req = SendRequest(
+                        destination=target,
+                        text=processed_text,
+                        source_channel=donor_clean,
+                        msg_id=msg_id,
+                        download_media=download_photos,
+                        article_code=article_code or None,
+                        bot_username=bot_username or None,
+                        generate_video=enable_video_gen,
+                        video_aspect_ratio=video_aspect_ratio,
+                        product_price=f"{calculated['retail']} {currency}" if calculated.get("retail") else None,
+                        video_provider=video_provider,
+                        video_api_key=video_api_key,
+                        video_motion_style=video_motion_style,
+                        video_auto_prompt=True,
+                        vton_enabled=vton_enabled,
+                        brand_badge_text=brand_badge_text,
+                        watermark_position=watermark_position,
+                    )
+                    send_res = await batch_send(send_req, user, None)
+                    if send_res and send_res.get("status") == "skipped":
+                        is_skipped = True
+                        skip_detail = send_res.get("detail") or "Пропущен (дубликат)"
+                    elif send_res:
+                        publish_success = True
+                        last_media_count = send_res.get("media_count") or (1 if send_res.get("has_media") else 0)
+                except Exception as send_err:
+                    logger.warning(f"[AutonomousWorker] Failed sending to {target}: {send_err}")
+
+            if manager.get_state()["should_stop"]:
+                break
+
+            if is_skipped and not publish_success:
+                manager.add_log(
+                    f"{item_label} #{i + 1}",
+                    raw_text,
+                    "skipped_duplicate",
+                    {"id": msg_id, "detail": skip_detail}
+                )
+                continue
+
+            # Синхронизация с Mini App
+            if module == "store" and sync_to_miniapp and publish_success:
+                try:
+                    from database.models import MiniAppPost
+                    async with async_session() as db:
+                        db.add(MiniAppPost(
+                            title=processed_text.split("\n")[0][:120] or f"Товар #{i + 1}",
+                            text=processed_text,
+                            price=f"{calculated['retail']} {currency}" if calculated.get("retail") else None,
+                            source_channel=donor_clean,
+                            target_channel=targets[0],
+                            category="Store",
+                            media_urls=[]
+                        ))
+                        await db.commit()
+                except Exception as ma_err:
+                    logger.warning(f"[AutonomousWorker] MiniApp sync error: {ma_err}")
+
+            prices_log = None
+            if calculated and calculated.get("retail"):
+                prices_log = {
+                    "opt": calculated.get("wholesale") or calculated.get("retail"),
+                    "drop": calculated.get("drop") or calculated.get("retail"),
+                    "retail": calculated.get("retail"),
+                }
+
+            manager.add_log(
+                f"{item_label} #{i + 1}",
+                raw_text,
+                "published",
+                {
+                    "id": msg_id,
+                    "original": raw_text,
+                    "processed": processed_text,
+                    "prices": prices_log,
+                    "mediaCount": last_media_count,
+                }
+            )
+
+            # Обратный отсчёт паузы между постами на сервере
+            if interval_seconds > 0 and i < total_msgs - 1:
+                for sec in range(interval_seconds, 0, -1):
+                    if manager.get_state()["should_stop"]:
+                        break
+                    mins, rem_s = divmod(sec, 60)
+                    fmt_time = f"{mins} мин {rem_s:02d} сек" if mins > 0 else f"{rem_s} сек"
+                    manager.update_state({
+                        "current": i + 1,
+                        "countdown_sec": sec,
+                        "status_message": f"Опубликовано {i + 1}/{total_msgs}. Пауза до следующего поста: {fmt_time}"
+                    })
+                    await asyncio.sleep(1)
+
+            if manager.get_state()["should_stop"]:
+                break
+
+        # 3. Переход в живой мониторинг или завершение
+        if not manager.get_state()["should_stop"] and live_monitoring:
+            try:
+                async with async_session() as db:
+                    proj_req = ProjectCreateRequest(
+                        name=f"{'Магазин' if module == 'store' else 'Парсер'}: {donor_clean} ➔ {', '.join(targets)}",
+                        donor_channel_id=donor_clean,
+                        target_channel_id=", ".join(targets),
+                        rewrite_enabled=True,
+                        rewrite_prompt=custom_prompt or "Стильное продающее описание товара",
+                        remove_links=True,
+                        vton_enabled=vton_enabled,
+                        check_interval=max(60, interval_seconds),
+                    )
+                    proj_dict = await create_project(proj_req, db, user)
+                    if proj_dict and proj_dict.get("id"):
+                        await start_project(proj_dict["id"], db, user)
+            except Exception as lm_err:
+                logger.warning(f"[AutonomousWorker] Could not start live monitoring project: {lm_err}")
+
+            manager.update_state({
+                "is_running": True,
+                "is_live_monitoring": True,
+                "countdown_sec": 0,
+                "status_message": f"✅ Пакетный импорт {total_msgs} постов завершён! Включён ЖИВОЙ АВТО-МОНИТОРИНГ для {', '.join(targets)}..."
+            })
+        elif not manager.get_state()["should_stop"]:
+            manager.update_state({
+                "is_running": False,
+                "is_live_monitoring": False,
+                "countdown_sec": 0,
+                "status_message": f"🎉 Все {total_msgs} постов успешно выложены в {', '.join(targets)}!"
+            })
+
+    except asyncio.CancelledError:
+        manager.update_state({
+            "is_running": False,
+            "is_live_monitoring": False,
+            "countdown_sec": 0,
+            "status_message": "⏹ Процесс переноса остановлен"
+        })
+    except Exception as exc:
+        logger.error(f"[AutonomousWorker] Error for user {user_id}: {exc}")
+        if not manager.get_state()["should_stop"]:
+            manager.update_state({
+                "is_running": False,
+                "is_live_monitoring": False,
+                "countdown_sec": 0,
+                "status_message": f"Ошибка переноса: {exc}"
+            })
+    finally:
+        BACKGROUND_BATCH_WORKERS.pop(str(user_id), None)
+
 
 @app.get("/api/tasks/status")
 async def get_tasks_status(current_user: User = Depends(get_current_user)):
@@ -595,19 +994,40 @@ async def get_tasks_status(current_user: User = Depends(get_current_user)):
 
 @app.post("/api/tasks/start")
 async def start_tasks(data: dict = None, current_user: User = Depends(get_current_user)):
-    """Сбрасывает флаг остановки и переводит менеджер задач в активное состояние."""
+    """
+    Запускает автономную задачу парсинга на сервере (или сбрасывает флаг остановки).
+    Если передан run_on_server=True, задача выполняется полностью в фоне на сервере!
+    """
     from core.product_parser import workers
-    if str(current_user.id) in workers:
+    uid = str(current_user.id)
+    if uid in workers:
         raise HTTPException(409, "Сначала остановите или дождитесь фонового переноса фото.")
+
+    # Если предыдущий фоновый воркер ещё висит — отменяем его перед стартом нового
+    old_worker = BACKGROUND_BATCH_WORKERS.pop(uid, None)
+    if old_worker and not old_worker.done():
+        old_worker.cancel()
+
     payload = data or {}
     task_manager = task_managers.for_user(current_user.id)
+    donors_list = payload.get("donors") or ([payload.get("donor")] if payload.get("donor") else [])
+    donor_first = donors_list[0] if donors_list else ""
+    total_limit = int(payload.get("limit") or payload.get("total") or 0)
+
     task_manager.start(
         module=payload.get("module", "store"),
-        donor=payload.get("donor", ""),
+        donor=donor_first,
         targets=payload.get("targets", []),
-        total=payload.get("total", 0)
+        total=total_limit
     )
-    logger.info(f"[TaskManager] Task started for user {current_user.phone_number} (module: {payload.get('module')})")
+
+    if payload.get("run_on_server"):
+        worker_task = asyncio.create_task(_run_autonomous_batch_worker(uid, payload))
+        BACKGROUND_BATCH_WORKERS[uid] = worker_task
+        logger.info(f"[TaskManager] Autonomous server batch worker started for user {current_user.phone_number} (module: {payload.get('module')}, limit: {total_limit})")
+    else:
+        logger.info(f"[TaskManager] Task started for user {current_user.phone_number} (module: {payload.get('module')})")
+
     return {"status": "started", "state": task_manager.get_state()}
 
 
@@ -615,7 +1035,8 @@ async def start_tasks(data: dict = None, current_user: User = Depends(get_curren
 async def sync_tasks_status(data: dict, current_user: User = Depends(get_current_user)):
     """Синхронизирует состояние выполнения задачи с сервером."""
     from core.product_parser import workers
-    if str(current_user.id) not in workers:
+    uid = str(current_user.id)
+    if uid not in workers and uid not in BACKGROUND_BATCH_WORKERS:
         task_managers.for_user(current_user.id).update_state(data)
     return {"status": "synced"}
 
@@ -623,8 +1044,12 @@ async def sync_tasks_status(data: dict, current_user: User = Depends(get_current
 @app.post("/api/tasks/stop")
 async def stop_tasks(current_user: User = Depends(get_current_user)):
     """Мгновенно останавливает активную задачу с любого устройства (ПК или телефон)."""
+    uid = str(current_user.id)
     task_manager = task_managers.for_user(current_user.id)
     task_manager.stop()
+    bg_worker = BACKGROUND_BATCH_WORKERS.pop(uid, None)
+    if bg_worker and not bg_worker.done():
+        bg_worker.cancel()
     logger.info(f"[TaskManager] Task stopped by user {current_user.phone_number}")
     return {"status": "stopped", "state": task_manager.get_state()}
 

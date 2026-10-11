@@ -217,23 +217,46 @@ export const StorePage: React.FC<StorePageProps> = ({ config }) => {
       return;
     }
     cancelRef.current = false;
-    try { await taskExecutionService.startStoreTask(); }
-    catch (exc) { alert(exc instanceof Error ? exc.message : 'Не удалось запустить перенос.'); return; }
-
     const donorClean = cleanChannel(donors[0]);
     const targetCleanList = targetChannels.map(cleanChannel);
 
-    taskExecutionService.updateStoreState({
-      donors: [donorClean],
-      targets: targetCleanList,
-      current: 0,
-      total: copyCount,
-      countdownSec: 0,
-      statusMessage: `Загрузка ${copyCount} товаров из канала ${donorClean}...`,
-      logs: []
-    });
-
-    addActionLog('🛒 Запуск магазина', `Запрошено ${copyCount} постов из ${donorClean} ➔ ${targetCleanList.join(', ')}`, 'success');
+    try {
+      await taskExecutionService.startAutonomousServerTask({
+        module: 'store',
+        donor: donorClean,
+        donors: donors.map(cleanChannel),
+        targets: targetCleanList,
+        limit: copyCount,
+        total: copyCount,
+        interval_seconds: Math.round(intervalMinutes * 60),
+        prompt: promptRules,
+        filter_ads: filterAds,
+        download_photos: downloadPhotos,
+        create_articles: createArticles,
+        sync_to_miniapp: syncToMiniApp,
+        article_prefix: articlePrefix || 'ART',
+        live_monitoring: enableLiveMonitoringAfterBatch,
+        price_mode: priceMode,
+        single_markup: singleMarkupPct,
+        wholesale_markup: wholesalePct,
+        drop_markup: dropPct,
+        retail_markup: retailPct,
+        currency,
+        vton_enabled: enableVton,
+        brand_badge_text: brandBadgeText || undefined,
+        watermark_position: watermarkPosition || 'auto',
+        enable_video_gen: enableVideoGen,
+        video_aspect_ratio: videoAspectRatio,
+        video_provider: videoProvider,
+        video_api_key: videoApiKey || undefined,
+        video_motion_style: videoMotionStyle,
+      });
+      addActionLog('🛒 Автономный запуск магазина (Сервер)', `Запущен фоновый перенос ${copyCount} товаров из ${donorClean} ➔ ${targetCleanList.join(', ')}. Можно закрывать сайт!`, 'success');
+      return;
+    } catch (exc) {
+      alert(exc instanceof Error ? exc.message : 'Не удалось запустить фоновый перенос на сервере.');
+      return;
+    }
 
     try {
       // 1. Fetch N messages from donor channel
